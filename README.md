@@ -1,6 +1,6 @@
 # Aesi's Signal Petal
 
-A private, local browser app for SREs to log issues, coordinate follow-ups, record outcomes, and track delivery health. Each person runs their own copy on their own computer.
+A private, local browser app for professionals to log issues, coordinate follow-ups, record outcomes, and track delivery health. Each person runs their own copy on their own computer.
 
 ## What it includes
 
@@ -8,6 +8,7 @@ A private, local browser app for SREs to log issues, coordinate follow-ups, reco
 - Dashboard, daily calendar, and delivery insights
 - Desktop follow-up and daily check-in notifications (when the browser is open and permission is granted)
 - Ten light themes and matching dark themes
+- A first-start profile pop-up that personalizes the app with the person’s name and role
 - Local-only storage: data stays in the browser on that computer
 
 ## Before you start
@@ -56,6 +57,7 @@ Then visit [http://localhost:3000](http://localhost:3000).
 - Your issues, updates, and theme choice are saved only in your browser on the computer where you use the app.
 - Sharing this zip gives someone the application, **not** your logged work or browser data.
 - Each person has their own separate local workspace. There is no shared team database in this version.
+- On first launch, the app asks for the person’s name and role. Those details personalize their app and stay in that browser only.
 - Clearing browser storage for `localhost` clears that local app data, so keep important records elsewhere if you need a long-term backup.
 
 ## Troubleshooting
