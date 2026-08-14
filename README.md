@@ -1,6 +1,6 @@
 # Aesi's Signal Petal
 
-A private, local browser app for professionals to log issues, coordinate follow-ups, record outcomes, and track delivery health. Each person runs their own copy on their own computer.
+A private, local browser app for SREs to log issues, coordinate follow-ups, record outcomes, and track delivery health. Each person runs their own copy on their own computer.
 
 ## What it includes
 
@@ -8,7 +8,6 @@ A private, local browser app for professionals to log issues, coordinate follow-
 - Dashboard, daily calendar, and delivery insights
 - Desktop follow-up and daily check-in notifications (when the browser is open and permission is granted)
 - Ten light themes and matching dark themes
-- A first-start profile pop-up that personalizes the app with the person’s name and role
 - Local-only storage: data stays in the browser on that computer
 
 ## Before you start
@@ -16,6 +15,37 @@ A private, local browser app for professionals to log issues, coordinate follow-
 Install **Node.js 22 LTS or newer** from [nodejs.org](https://nodejs.org/). Node is the small runtime that lets this local app run.
 
 You also need an internet connection the first time you install the app, so its dependencies can download. After installation, day-to-day use is local.
+
+## macOS setup
+
+1. Unzip the `aesis-signal-petal-v1.2.zip` file.
+2. For the easiest start, double-click **Start Aesi's Signal Petal.command**. If macOS blocks it, right-click the file, choose **Open**, then choose **Open** again.
+3. The first launch downloads the app’s required components, then opens it at [http://localhost:3000](http://localhost:3000).
+
+### Terminal alternative
+
+Open **Terminal** and move into the unzipped folder. For example:
+
+```bash
+cd ~/Downloads/aesis-signal-petal
+```
+
+Then enable the included package manager and install the app:
+
+```bash
+corepack enable
+pnpm install
+```
+
+Start the app:
+
+```bash
+pnpm dev
+```
+
+Open the local address shown in Terminal—normally [http://localhost:3000](http://localhost:3000).
+
+Leave Terminal running while you use the app. To stop it, return to Terminal and press `Control + C`.
 
 ## Windows setup
 
@@ -57,7 +87,6 @@ Then visit [http://localhost:3000](http://localhost:3000).
 - Your issues, updates, and theme choice are saved only in your browser on the computer where you use the app.
 - Sharing this zip gives someone the application, **not** your logged work or browser data.
 - Each person has their own separate local workspace. There is no shared team database in this version.
-- On first launch, the app asks for the person’s name and role. Those details personalize their app and stay in that browser only.
 - Clearing browser storage for `localhost` clears that local app data, so keep important records elsewhere if you need a long-term backup.
 
 ## Troubleshooting
