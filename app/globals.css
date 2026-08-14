@@ -180,9 +180,22 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
 .transfer-actions button{min-height:44px}
 .transfer-message{margin:0;padding:10px 12px;border-radius:9px;color:var(--accent-deep);background:var(--accent-soft);font-size:13px;font-weight:700;line-height:1.4}
 .primary:disabled{cursor:not-allowed;opacity:.5;box-shadow:none}
+.selected-action{border-color:var(--accent);background:var(--accent-soft)}
+.settings-page{display:grid;gap:18px;max-width:1040px}
+.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.settings-card{min-width:0;padding:22px;background:var(--panel);border:1px solid var(--border);border-radius:15px;color:var(--text)}
+.settings-card h2{margin:0 0 13px;font-size:20px}
+.settings-copy{margin:-4px 0 16px;color:var(--subtext);font-size:14px;line-height:1.5}
+.settings-field{display:grid;gap:7px;color:var(--subtext);font-size:13px;font-weight:800}
+.settings-field select,.settings-card .status-row input:not(.status-color),.settings-card .status-add input,.settings-card textarea{width:100%;border:1px solid var(--border);border-radius:9px;padding:11px 12px;background:var(--card);color:var(--text);outline-color:var(--accent)}
+.settings-toggle{width:100%;min-height:58px;margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left}
+.settings-toggle>span:first-child{display:grid;gap:3px}.settings-toggle strong{font-size:14px}.settings-toggle small{color:var(--subtext);font-size:12px}
+.switch-track{position:relative;display:block;flex:0 0 auto;width:42px;height:24px;border-radius:999px;background:var(--border);transition:background .2s ease}.switch-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--panel);box-shadow:0 1px 4px rgb(45 24 38 / 28%);transition:transform .2s ease}.switch-track.is-on{background:var(--accent)}.switch-track.is-on::after{transform:translateX(18px)}
+.settings-actions{display:flex;justify-content:flex-end;padding-top:13px}.settings-actions .primary{min-width:180px}
+.data-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.data-settings-grid .transfer-section{min-width:0;padding:16px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft)}
 
 @media (max-width:650px){
-  .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.66fr) minmax(0,.86fr) minmax(0,1.18fr);width:100%;gap:7px}
+  .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.25fr);width:100%;gap:7px}
   .workspace>header .header-actions button{width:auto;min-height:46px;padding:10px 8px}
   .status-modal,.data-modal{max-height:none}
   .status-add{grid-template-columns:minmax(0,1fr) auto}
@@ -198,4 +211,9 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
   .confirm-actions{display:grid;grid-template-columns:1fr 1fr}
   .confirm-actions button{min-height:46px}
   .transfer-actions{grid-template-columns:1fr 1fr}
+  .settings-grid,.data-settings-grid{grid-template-columns:1fr}
+  .settings-card{padding:17px}
+  .settings-card h2{font-size:18px}
+  .settings-actions{position:sticky;bottom:calc(64px + env(safe-area-inset-bottom));z-index:4;margin:0 -2px;padding:20px 2px 0;background:linear-gradient(transparent,var(--panel) 28%)}
+  .settings-actions .primary{width:100%;min-height:46px}
 }
