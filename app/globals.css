@@ -196,6 +196,8 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
 .metric-card{min-width:0;min-height:118px;padding:17px 18px;border:1px solid var(--border);border-radius:14px;background:var(--panel);color:var(--text);text-align:left;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
 .metric-card:hover{border-color:var(--accent);transform:translateY(-1px)}.metric-card:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);outline-offset:2px}.metric-card.metric-selected{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
 .metric-card.warm{background:#fff8ed;border-color:#f6e4c4}.metric-card.good{background:#f1faf6;border-color:#d9ede2}.view-mine .metric-card.personal,.view-attention .metric-card.urgent{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--view-accent),color-mix(in srgb,var(--view-accent) 72%,#332342))}.view-mine .metric-card.personal span,.view-mine .metric-card.personal small,.view-attention .metric-card.urgent span,.view-attention .metric-card.urgent small{color:#fff;opacity:.9}main.dark-mode .metric-card{background:var(--panel);border-color:var(--border)}main.dark-mode .metric-card.warm{background:#332b27;border-color:#5a463e}main.dark-mode .metric-card.good{background:#24322c;border-color:#3d5a4b}main.dark-mode .metric-card.metric-selected{border-color:var(--accent)}
+.issue-card-people{display:block;margin-top:8px;color:var(--accent-deep);font-size:11px;font-weight:700;line-height:1.35}.issue-meta em{color:var(--accent-deep);font-size:10px;font-style:normal;font-weight:750}
+.people-field{display:grid;gap:8px}.people-field>span{color:var(--subtext);font-size:13px;font-weight:750}.people-field>small{color:var(--subtext);font-size:11px;line-height:1.4}.people-chips{display:flex;flex-wrap:wrap;gap:7px}.person-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 8px 6px 10px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--border));border-radius:999px;background:var(--accent-soft);color:var(--accent-deep);font-size:12px;font-weight:750}.person-chip button{display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--accent) 15%,transparent);color:inherit;font-size:14px;line-height:1}.people-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.people-add .secondary{white-space:nowrap}.people-add input{min-width:0}
 
 @media (max-width:650px){
   .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.25fr);width:100%;gap:7px}
@@ -216,6 +218,8 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
   .transfer-actions{grid-template-columns:1fr 1fr}
   .settings-grid,.data-settings-grid{grid-template-columns:1fr}
   .metric-card{min-height:104px;padding:13px}
+  .people-add{grid-template-columns:1fr}.people-add .secondary{min-height:44px}
+  .issue-card-people{font-size:10px}.issue-meta em{display:none}
   .settings-card{padding:17px}
   .settings-card h2{font-size:18px}
   .settings-actions{position:sticky;bottom:calc(64px + env(safe-area-inset-bottom));z-index:4;margin:0 -2px;padding:20px 2px 0;background:linear-gradient(transparent,var(--panel) 28%)}
