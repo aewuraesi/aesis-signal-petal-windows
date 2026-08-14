@@ -74,7 +74,7 @@ main { min-height:100vh; display:flex; } .sidebar { width:245px; padding:28px 16
   main{display:block;min-height:100dvh}
   .sidebar{display:flex;position:fixed;inset:auto 0 0;z-index:30;width:100%;height:auto;padding:6px max(8px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border:0;border-top:1px solid var(--border);box-shadow:0 -8px 24px rgb(57 25 47 / 10%)}
   .sidebar .brand,.sidebar .sidebar-bottom{display:none}
-  .sidebar nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;width:100%}
+  .sidebar nav{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px;width:100%}
   .sidebar nav button{position:relative;min-width:0;min-height:52px;justify-content:center;flex-direction:column;gap:2px;padding:5px 2px;border-radius:9px;text-align:center;font-size:18px;line-height:1;touch-action:manipulation}
   .sidebar nav button span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;line-height:1.2}
   .sidebar nav em{position:absolute;top:2px;right:calc(50% - 23px);min-width:16px;padding:1px 4px;font-size:9px;line-height:14px}
@@ -193,6 +193,9 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
 .switch-track{position:relative;display:block;flex:0 0 auto;width:42px;height:24px;border-radius:999px;background:var(--border);transition:background .2s ease}.switch-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--panel);box-shadow:0 1px 4px rgb(45 24 38 / 28%);transition:transform .2s ease}.switch-track.is-on{background:var(--accent)}.switch-track.is-on::after{transform:translateX(18px)}
 .settings-actions{display:flex;justify-content:flex-end;padding-top:13px}.settings-actions .primary{min-width:180px}
 .data-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.data-settings-grid .transfer-section{min-width:0;padding:16px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft)}
+.metric-card{min-width:0;min-height:118px;padding:17px 18px;border:1px solid var(--border);border-radius:14px;background:var(--panel);color:var(--text);text-align:left;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.metric-card:hover{border-color:var(--accent);transform:translateY(-1px)}.metric-card:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);outline-offset:2px}.metric-card.metric-selected{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
+.metric-card.warm{background:#fff8ed;border-color:#f6e4c4}.metric-card.good{background:#f1faf6;border-color:#d9ede2}.view-mine .metric-card.personal,.view-attention .metric-card.urgent{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--view-accent),color-mix(in srgb,var(--view-accent) 72%,#332342))}.view-mine .metric-card.personal span,.view-mine .metric-card.personal small,.view-attention .metric-card.urgent span,.view-attention .metric-card.urgent small{color:#fff;opacity:.9}main.dark-mode .metric-card{background:var(--panel);border-color:var(--border)}main.dark-mode .metric-card.warm{background:#332b27;border-color:#5a463e}main.dark-mode .metric-card.good{background:#24322c;border-color:#3d5a4b}main.dark-mode .metric-card.metric-selected{border-color:var(--accent)}
 
 @media (max-width:650px){
   .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.25fr);width:100%;gap:7px}
@@ -212,8 +215,11 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
   .confirm-actions button{min-height:46px}
   .transfer-actions{grid-template-columns:1fr 1fr}
   .settings-grid,.data-settings-grid{grid-template-columns:1fr}
+  .metric-card{min-height:104px;padding:13px}
   .settings-card{padding:17px}
   .settings-card h2{font-size:18px}
   .settings-actions{position:sticky;bottom:calc(64px + env(safe-area-inset-bottom));z-index:4;margin:0 -2px;padding:20px 2px 0;background:linear-gradient(transparent,var(--panel) 28%)}
   .settings-actions .primary{width:100%;min-height:46px}
 }
+
+@media (max-width:380px){.metric-card{min-height:88px;padding:12px}}
