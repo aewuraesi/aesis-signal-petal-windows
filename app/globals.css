@@ -144,9 +144,13 @@ main { min-height:100vh; display:flex; } .sidebar { width:245px; padding:28px 16
 .status-modal{max-height:calc(100vh - 40px);overflow-y:auto;background:var(--panel)}
 .modal-copy{margin:-4px 30px 2px 0;color:var(--subtext);font-size:14px;line-height:1.5}
 .status-list{display:grid;gap:8px}
-.status-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:9px}
-.status-row input{min-width:0}
+.status-row{display:grid;grid-template-columns:minmax(0,1fr) 48px 72px;align-items:center;gap:9px}
+.status-row input,.status-row select{min-width:0}
+.status-row select{width:100%;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel);color:var(--text)}
 .status-row input:disabled{opacity:.8;color:var(--subtext);background:var(--panel-soft)}
+.status-row .status-color{width:48px;height:44px;padding:4px;border:1px solid var(--border);border-radius:9px;cursor:pointer;background:var(--panel)}
+.status-color::-webkit-color-swatch-wrapper{padding:0}
+.status-color::-webkit-color-swatch{border:0;border-radius:6px}
 .status-row button{border:1px solid var(--border);border-radius:8px;padding:10px 11px;color:#b34f68;background:var(--panel);font-size:12px;font-weight:750}
 .status-row button:disabled{cursor:not-allowed;opacity:.5;color:var(--subtext)}
 .status-lock{min-width:69px;text-align:center;color:var(--subtext);font-size:12px;font-weight:750}
@@ -163,12 +167,17 @@ main { min-height:100vh; display:flex; } .sidebar { width:245px; padding:28px 16
 .danger:hover{background:#a5324d}
 main.dark-mode .secondary,main.dark-mode .status-row button{color:var(--text);background:var(--card);border-color:var(--border)}
 main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
+.status[style]{color:var(--status-color)!important;background:color-mix(in srgb,var(--status-color) 14%,var(--panel))!important;border:1px solid color-mix(in srgb,var(--status-color) 32%,transparent)}
 
 @media (max-width:650px){
   .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);width:100%;gap:8px}
   .workspace>header .header-actions button{width:auto;min-height:46px;padding:10px 8px}
   .status-modal{max-height:none}
   .status-add{grid-template-columns:minmax(0,1fr) auto}
+  .status-row{grid-template-columns:minmax(0,1fr) 44px 64px;gap:7px}
+  .status-row .status-color{width:44px}
+  .status-row button{padding-inline:7px}
+  .status-lock{min-width:0}
   .modal-actions{position:sticky;bottom:0;z-index:4;margin:0 -2px;padding:12px 2px 0;background:linear-gradient(transparent,var(--panel) 22%)}
   .modal-actions button{flex:1;min-height:46px}
   .confirm-dialog{width:100%;padding:25px 20px calc(22px + env(safe-area-inset-bottom));border-radius:20px 20px 0 0}
