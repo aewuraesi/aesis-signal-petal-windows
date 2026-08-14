@@ -168,11 +168,22 @@ main { min-height:100vh; display:flex; } .sidebar { width:245px; padding:28px 16
 main.dark-mode .secondary,main.dark-mode .status-row button{color:var(--text);background:var(--card);border-color:var(--border)}
 main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
 .status[style]{color:var(--status-color)!important;background:color-mix(in srgb,var(--status-color) 14%,var(--panel))!important;border:1px solid color-mix(in srgb,var(--status-color) 32%,transparent)}
+.data-modal{max-height:calc(100vh - 40px);overflow-y:auto;background:var(--panel)}
+.transfer-section{display:grid;gap:10px}
+.transfer-section>div:first-child{display:grid;gap:3px}
+.transfer-section strong{font-size:15px}
+.transfer-section small{color:var(--subtext);font-size:12px;line-height:1.4}
+.transfer-code{width:100%;min-height:92px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace!important;font-size:11px!important;line-height:1.4;word-break:break-all}
+.transfer-divider{height:1px;background:var(--border);margin:3px 0}
+.transfer-actions{display:grid;grid-template-columns:auto 1fr;gap:9px}
+.transfer-actions button{min-height:44px}
+.transfer-message{margin:0;padding:10px 12px;border-radius:9px;color:var(--accent-deep);background:var(--accent-soft);font-size:13px;font-weight:700;line-height:1.4}
+.primary:disabled{cursor:not-allowed;opacity:.5;box-shadow:none}
 
 @media (max-width:650px){
-  .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);width:100%;gap:8px}
+  .workspace>header .header-actions{display:grid;grid-template-columns:minmax(0,.66fr) minmax(0,.86fr) minmax(0,1.18fr);width:100%;gap:7px}
   .workspace>header .header-actions button{width:auto;min-height:46px;padding:10px 8px}
-  .status-modal{max-height:none}
+  .status-modal,.data-modal{max-height:none}
   .status-add{grid-template-columns:minmax(0,1fr) auto}
   .status-row{grid-template-columns:minmax(0,1fr) 44px 64px;gap:7px}
   .status-row .status-color{width:44px}
@@ -183,4 +194,5 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
   .confirm-dialog{width:100%;padding:25px 20px calc(22px + env(safe-area-inset-bottom));border-radius:20px 20px 0 0}
   .confirm-actions{display:grid;grid-template-columns:1fr 1fr}
   .confirm-actions button{min-height:46px}
+  .transfer-actions{grid-template-columns:1fr 1fr}
 }

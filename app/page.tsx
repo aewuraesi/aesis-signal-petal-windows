@@ -6,6 +6,7 @@ type Status = string;
 type Entry = { id: string; at: string; text: string; author: string };
 type Profile = { name: string; role: string };
 type StatusDraft = { id: string; name: string; color: string; original?: string; kind?: "new" | "ongoing" | "terminal" };
+type TransferPayload = { version: 1; issues: Issue[]; statuses: Status[]; statusColors: Record<string, string> };
 type Issue = {
   id: string; title: string; details: string; owner: string; action: string;
   expected: string; createdAt: string; completedAt?: string; status: Status; outcome: string; updates: Entry[];
@@ -28,6 +29,17 @@ const seed: Issue[] = [
 
 const statusClass = (status: Status) => `status ${status.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
 const isCompleteStatus = (status: Status) => status === "Resolved" || status === "Closed";
+const encodeTransfer = (payload: TransferPayload) => {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+};
+const decodeTransfer = (value: string) => {
+  const binary = atob(value);
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes)) as TransferPayload;
+};
 const dateLabel = (value: string) => value ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)) : "No ETA";
 const isOverdue = (issue: Issue) => !isCompleteStatus(issue.status) && issue.expected && new Date(issue.expected).getTime() < Date.now();
 const daysOverdue = (issue: Issue) => Math.max(1, Math.ceil((Date.now() - new Date(issue.expected).getTime()) / 86400000));
@@ -39,12 +51,16 @@ export default function Home() {
   const [showDetail, setShowDetail] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showStatusSettings, setShowStatusSettings] = useState(false);
+  const [showDataTransfer, setShowDataTransfer] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [statuses, setStatuses] = useState<Status[]>(defaultStatuses);
   const [statusColors, setStatusColors] = useState<Record<string, string>>(defaultStatusColors);
   const [statusDraft, setStatusDraft] = useState<StatusDraft[]>([]);
   const [statusInput, setStatusInput] = useState("");
   const [statusError, setStatusError] = useState("");
+  const [transferCode, setTransferCode] = useState("");
+  const [importCode, setImportCode] = useState("");
+  const [transferMessage, setTransferMessage] = useState("");
   const [filter, setFilter] = useState<"All" | "Mine" | "Overdue">("All");
   const [section, setSection] = useState<"dashboard" | "calendar" | "metrics">("dashboard");
   const [calendarMonth, setCalendarMonth] = useState(new Date(2026, 7, 1));
@@ -83,10 +99,11 @@ export default function Home() {
   useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-theme", theme); localStorage.setItem("signal-petal-dark", String(darkMode)); } }, [theme, darkMode, hydrated]);
   useEffect(() => { if (hydrated && profile) { localStorage.setItem("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
   useEffect(() => {
-    if (!showDetail && !showCreate && !showStatusSettings && !showDeleteConfirm) return;
+    if (!showDetail && !showCreate && !showStatusSettings && !showDataTransfer && !showDeleteConfirm) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (showDeleteConfirm) setShowDeleteConfirm(false);
+        else if (showDataTransfer) setShowDataTransfer(false);
         else if (showStatusSettings) setShowStatusSettings(false);
         else if (showCreate) setShowCreate(false);
         else setShowDetail(false);
@@ -96,7 +113,7 @@ export default function Home() {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", closeOnEscape); document.body.style.overflow = previousOverflow; };
-  }, [showDetail, showCreate, showStatusSettings, showDeleteConfirm]);
+  }, [showDetail, showCreate, showStatusSettings, showDataTransfer, showDeleteConfirm]);
   useEffect(() => {
     const check = () => {
       if ("Notification" in window && Notification.permission === "granted") {
@@ -185,6 +202,33 @@ export default function Home() {
     setStatuses(names);
     setShowStatusSettings(false);
   }
+  function openDataTransfer() {
+    setTransferCode(encodeTransfer({ version: 1, issues, statuses, statusColors }));
+    setImportCode("");
+    setTransferMessage("");
+    setShowDataTransfer(true);
+  }
+  async function copyTransferCode() {
+    try { await navigator.clipboard.writeText(transferCode); setTransferMessage("Backup code copied. Open Signal Petal at the other address and paste it there."); }
+    catch { setTransferMessage("Copy was blocked by the browser. Select the code and copy it manually."); }
+  }
+  async function pasteTransferCode() {
+    try { const code = await navigator.clipboard.readText(); setImportCode(code); setTransferMessage(code ? "Backup code pasted. Choose Import and replace to finish." : "The clipboard is empty."); }
+    catch { setTransferMessage("Paste was blocked by the browser. Paste the backup code into the box manually."); }
+  }
+  function importTransfer() {
+    try {
+      const payload = decodeTransfer(importCode.trim());
+      if (payload.version !== 1 || !Array.isArray(payload.issues) || !Array.isArray(payload.statuses) || !payload.statusColors || typeof payload.statusColors !== "object") throw new Error("Invalid backup");
+      setIssues(payload.issues);
+      setStatuses(payload.statuses);
+      setStatusColors(payload.statusColors);
+      setActiveId(payload.issues[0]?.id ?? "");
+      setTransferCode(encodeTransfer(payload));
+      setTransferMessage(`${payload.issues.length} task${payload.issues.length === 1 ? "" : "s"} imported successfully.`);
+      setImportCode("");
+    } catch { setTransferMessage("That backup code is not valid. Copy it again from the other Signal Petal address."); }
+  }
   function addUpdate(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const text = String(form.get("update") || "").trim(); if (!text || !active) return; updateIssue({ updates: [...active.updates, { id: crypto.randomUUID(), at: new Date().toISOString(), author: personalOwner, text }] }); event.currentTarget.reset(); }
   function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const issue: Issue = { id: crypto.randomUUID(), title: String(form.get("title")), details: String(form.get("details")), owner: String(form.get("owner")) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, status: "New", outcome: "", updates: [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }] }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setShowCreate(false); setShowDetail(true); }
   function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = String(form.get("name") || "").trim(); const role = String(form.get("role") || "").trim(); if (name && role) setProfile({ name, role }); }
@@ -197,7 +241,7 @@ export default function Home() {
       <div className="sidebar-bottom"><div className="appearance"><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}>{themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><button className="mode-toggle" onClick={() => setDarkMode(value => !value)}>{darkMode ? "☀ Light mode" : "◐ Dark mode"}</button></div><button className="notification-button" onClick={enableNotifications}>◌ {notificationState}</button><p>Data stays privately on this device.</p></div>
     </aside>
     <section className={`workspace ${section === "dashboard" ? `view-${dashboardView}` : ""}`}>
-      <header><div><p className="eyebrow">{section === "dashboard" && filter === "Mine" ? "PERSONAL FOCUS" : section === "dashboard" && filter === "Overdue" ? "TRIAGE MODE" : profile ? `${profile.name.toUpperCase()}'S WORKSPACE` : "YOUR WORKSPACE"}</p><h1>{pageTitle}</h1><p className="subhead">{pageDescription}</p></div><div className="header-actions"><button className="secondary" type="button" onClick={openStatusSettings}>⚙ Statuses</button><button className="primary" type="button" onClick={() => setShowCreate(true)}>+ Log an issue</button></div></header>
+      <header><div><p className="eyebrow">{section === "dashboard" && filter === "Mine" ? "PERSONAL FOCUS" : section === "dashboard" && filter === "Overdue" ? "TRIAGE MODE" : profile ? `${profile.name.toUpperCase()}'S WORKSPACE` : "YOUR WORKSPACE"}</p><h1>{pageTitle}</h1><p className="subhead">{pageDescription}</p></div><div className="header-actions"><button className="secondary" type="button" onClick={openDataTransfer}>⇄ Data</button><button className="secondary" type="button" onClick={openStatusSettings}>⚙ Statuses</button><button className="primary" type="button" onClick={() => setShowCreate(true)}>+ Log an issue</button></div></header>
       {section === "dashboard" && <><section className="metric-row">{filter === "Mine" ? <><article className="personal"><span>My open actions</span><strong>{mineOpen.length}</strong><small>Assigned directly to you</small></article><article className={mineOverdue.length ? "warm" : "good"}><span>My overdue</span><strong>{mineOverdue.length}</strong><small>{mineOverdue.length ? "Needs your follow-up" : "Your work is on track"}</small></article><article><span>My {completionLabel.toLowerCase()}</span><strong>{mineResolved.length}</strong><small>Personal outcomes captured</small></article><article><span>My total</span><strong>{mine.length}</strong><small>Across every status</small></article></> : filter === "Overdue" ? <><article className="urgent"><span>Overdue now</span><strong>{overdueCount}</strong><small>Past expected update</small></article><article className="warm"><span>Oldest delay</span><strong>{attentionQueue.length ? daysOverdue(attentionQueue[0]) : 0}d</strong><small>{attentionQueue.length ? attentionQueue[0].title : "Nothing is overdue"}</small></article><article><span>Owners affected</span><strong>{new Set(attentionQueue.map(i => i.owner)).size}</strong><small>People needing follow-up</small></article><article><span>First move</span><strong>{attentionQueue.length ? "Now" : "Clear"}</strong><small>{attentionQueue.length ? "Start with the oldest item" : "No triage needed"}</small></article></> : <><article><span>Open work</span><strong>{openCount}</strong><small>Across your active issues</small></article><article className="warm"><span>Needs attention</span><strong>{overdueCount}</strong><small>{overdueCount ? "Past its expected update" : "Everything is on track"}</small></article><article><span>{completionLabel}</span><strong>{resolvedIssues.length}</strong><small>Outcomes documented</small></article><article><span>Next check-in</span><strong>Today</strong><small>Daily wrap-up at 4:30 PM</small></article></>}</section>
       <section className="content-grid">
         <div className={`issue-panel issue-panel-${dashboardView}`}><div className="section-heading"><div><p className="eyebrow">{filter === "Mine" ? "PERSONAL QUEUE" : filter === "Overdue" ? "PRIORITY QUEUE" : "WORK QUEUE"}</p><h2>{filter === "All" ? "Issues in motion" : filter === "Mine" ? "What I’m moving forward" : "Follow up, unblock, recover"}</h2></div><div className="filter-pills">{(["All", "Mine", "Overdue"] as const).map(f => <button className={filter === f ? "selected" : ""} onClick={() => setFilter(f)} key={f}>{f}</button>)}</div></div><div className="issue-list">{visible.map(issue => <button key={issue.id} className={`issue-card ${issue.id === activeId ? "active" : ""}`} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><div><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><h3>{issue.title}</h3><p>{issue.action || issue.details}</p></div><div className="issue-meta"><span className={isOverdue(issue) ? "due overdue" : "due"}>{isOverdue(issue) ? "Overdue · " : "Due · "}{dateLabel(issue.expected)}</span><span>{issue.owner}</span></div></button>)}{!visible.length && <div className="empty">{filter === "Mine" ? "Nothing is assigned to you right now." : filter === "Overdue" ? "Nothing needs attention—every active item is on track." : "No issues here—your queue is looking beautifully clear."}</div>}</div></div>
@@ -210,6 +254,7 @@ export default function Home() {
     {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field"><span>Responsible</span><input value={active.owner} onChange={e => updateIssue({owner:e.target.value})}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div><div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div></section></div>}
     {showCreate && <div className="modal-backdrop" role="presentation"><form className="modal" onSubmit={addIssue}><button className="close" type="button" onClick={() => setShowCreate(false)}>×</button><p className="eyebrow">NEW WORK ITEM</p><h2>Log an issue</h2><label>Issue title<input required name="title" placeholder="What needs attention?"/></label><label>Details<textarea name="details" placeholder="Context, impact, links, and useful clues…"/></label><div className="form-grid"><label>Responsible person<input name="owner" placeholder={personalOwner}/></label><label>Expected update<input name="expected" type="datetime-local"/></label></div><label>Current action<textarea name="action" placeholder="What are they—or you—doing next?"/></label><button className="primary create" type="submit">Create issue</button></form></div>}
     {showStatusSettings && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowStatusSettings(false); }}><section className="modal status-modal" role="dialog" aria-modal="true" aria-labelledby="status-settings-title"><button className="close" type="button" aria-label="Close status settings" onClick={() => setShowStatusSettings(false)}>×</button><p className="eyebrow">WORKFLOW SETTINGS</p><h2 id="status-settings-title">Customize statuses</h2><p className="modal-copy">New, Ongoing, and your completion status stay in the workflow. Choose Resolved or Closed, set colors, and edit or remove every other status. Removed work moves to Ongoing.</p><div className="status-list">{statusDraft.map((item, index) => <div className="status-row" key={item.id}>{item.kind === "terminal" ? <select aria-label="Completion status" value={item.name} onChange={e => { const name = e.target.value; setStatusDraft(items => items.map(draft => draft.id === item.id ? { ...draft, name } : draft)); setStatusError(""); }}><option>Resolved</option><option>Closed</option></select> : <input aria-label={`Status ${index + 1}`} value={item.name} disabled={item.kind === "new" || item.kind === "ongoing"} onChange={e => { const name = e.target.value; setStatusDraft(items => items.map(draft => draft.id === item.id ? { ...draft, name } : draft)); setStatusError(""); }}/>}<input className="status-color" type="color" aria-label={`Color for ${item.name}`} value={item.color} onChange={e => { const color = e.target.value; setStatusDraft(items => items.map(draft => draft.id === item.id ? { ...draft, color } : draft)); }}/>{item.kind ? <span className="status-lock">Required</span> : <button type="button" title="Remove status; matching issues will move to Ongoing" onClick={() => setStatusDraft(items => items.filter(draft => draft.id !== item.id))}>Remove</button>}</div>)}</div><form className="status-add" onSubmit={addStatus}><input value={statusInput} onChange={e => { setStatusInput(e.target.value); setStatusError(""); }} placeholder="Add a new status" aria-label="New status name"/><button className="secondary" type="submit">+ Add</button></form>{statusError && <p className="status-error" role="alert">{statusError}</p>}<div className="modal-actions"><button className="secondary" type="button" onClick={() => setShowStatusSettings(false)}>Cancel</button><button className="primary" type="button" onClick={saveStatuses}>Save statuses</button></div></section></div>}
+    {showDataTransfer && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDataTransfer(false); }}><section className="modal data-modal" role="dialog" aria-modal="true" aria-labelledby="data-transfer-title"><button className="close" type="button" aria-label="Close data transfer" onClick={() => setShowDataTransfer(false)}>×</button><p className="eyebrow">DEVICE-LOCAL DATA</p><h2 id="data-transfer-title">Move your tasks</h2><p className="modal-copy">Signal Petal keeps data separately at each web address. Copy a backup from the old address, then import it at the new one.</p><div className="transfer-section"><div><strong>1. Export from this address</strong><small>Includes tasks, update history, statuses, and status colors.</small></div><textarea className="transfer-code" readOnly value={transferCode} aria-label="Backup code"/><button className="secondary" type="button" onClick={copyTransferCode}>Copy backup code</button></div><div className="transfer-divider"/><div className="transfer-section"><div><strong>2. Import into this address</strong><small>Importing replaces the tasks and workflow setup currently stored here.</small></div><textarea className="transfer-code" value={importCode} onChange={e => setImportCode(e.target.value)} placeholder="Paste a backup code here" aria-label="Backup code to import"/><div className="transfer-actions"><button className="secondary" type="button" onClick={pasteTransferCode}>Paste code</button><button className="primary" type="button" disabled={!importCode.trim()} onClick={importTransfer}>Import and replace</button></div></div>{transferMessage && <p className="transfer-message" role="status">{transferMessage}</p>}</section></div>}
     {showDeleteConfirm && active && <div className="modal-backdrop confirm-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="confirm-icon">!</span><h2 id="delete-title">Delete this issue?</h2><p id="delete-description">“{active.title}” and its update history will be permanently removed.</p><div className="confirm-actions"><button className="secondary" type="button" autoFocus onClick={() => setShowDeleteConfirm(false)}>Keep issue</button><button className="danger" type="button" onClick={deleteIssue}>Delete issue</button></div></section></div>}
     {hydrated && !profile && <div className="profile-backdrop"><form className="profile-card" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="setup-title"><span className="profile-mark">✦</span><p className="eyebrow">WELCOME TO SIGNAL PETAL</p><h1 id="setup-title">Let&apos;s make this yours.</h1><p>Tell us a little about yourself and we&apos;ll personalize your workspace. This stays only in this browser.</p><label>Your name<input required name="name" autoFocus placeholder="e.g. Aesi"/></label><label>Your role<input required name="role" placeholder="e.g. Site Reliability Engineer"/></label><button className="primary" type="submit">Create my workspace</button></form></div>}
   </main>;
