@@ -30,13 +30,17 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
   },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Signal Petal", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#d95191",
 };
 
 export default function RootLayout({
