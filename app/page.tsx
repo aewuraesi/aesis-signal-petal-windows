@@ -6,13 +6,21 @@ type Status = string;
 type Entry = { id: string; at: string; text: string; author: string };
 type Profile = { name: string; role: string };
 type Mood = "bright" | "calm" | "okay" | "low" | "anxious" | "frustrated";
-type DiaryEntry = { id: string; at: string; title: string; text: string; mood: Mood; suggestion: string };
+type DiaryEntry = {
+  id: string; at: string; title: string; text: string; mood: Mood; suggestion: string; updatedAt?: string;
+  suggestionTried?: boolean; suggestionHelpful?: boolean;
+};
+type DiaryAction = "created" | "edited" | "deleted";
+/* Diary events live in their own list rather than on the entry, so the record of a
+   reflection having existed — and been reworked — survives deleting the entry itself. */
+type DiaryEvent = { id: string; entryId: string; at: string; action: DiaryAction; title: string; mood: Mood; detail: string };
+type InsightRange = "7d" | "30d" | "90d" | "all";
 type StatusDraft = { id: string; name: string; color: string; original?: string; kind?: "new" | "ongoing" | "terminal" };
-type TransferPayload = { version: 1; issues: Issue[]; statuses: Status[]; statusColors: Record<string, string>; diaryEntries?: DiaryEntry[] };
+type TransferPayload = { version: 1; issues: Issue[]; statuses: Status[]; statusColors: Record<string, string>; diaryEntries?: DiaryEntry[]; diaryLog?: DiaryEvent[] };
 type MetricFocus = "home-open" | "home-overdue" | "home-resolved" | "mine-open" | "mine-overdue" | "mine-resolved" | "mine-total" | "attention-overdue" | "attention-oldest" | "attention-owners" | "attention-first";
 type Issue = {
   id: string; title: string; details: string; owner: string; action: string;
-  expected: string; createdAt: string; completedAt?: string; status: Status; outcome: string; followUpPeople: string[]; updates: Entry[];
+  expected: string; createdAt: string; completedAt?: string; statusChangedAt?: string; status: Status; outcome: string; followUpPeople: string[]; updates: Entry[];
 };
 
 const defaultStatuses: Status[] = ["New", "Ongoing", "Waiting on dev", "Investigating", "Blocked", "Pending Monitoring", "Awaiting approval", "Resolved"];
@@ -24,6 +32,16 @@ const themes = [
   ["rose", "Rose quartz"], ["lilac", "Lilac haze"], ["peach", "Peach fizz"], ["blush", "Blush bloom"], ["berry", "Berry luxe"],
   ["ocean", "Ocean slate"], ["forest", "Forest moss"], ["navy", "Midnight navy"], ["sand", "Desert sand"], ["graphite", "Graphite"],
 ] as const;
+/* Diary paper faces. System stacks only — a local-first app should not wait on a font
+   server to render your own writing, and every stack degrades to a sane default. */
+const diaryFonts = [
+  ["journal", "Journal sans", "var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif"],
+  ["serif", "Classic serif", "\"Iowan Old Style\", \"Palatino Linotype\", Palatino, \"Book Antiqua\", Georgia, ui-serif, serif"],
+  ["typewriter", "Typewriter", "\"American Typewriter\", \"Courier New\", ui-monospace, monospace"],
+  ["hand", "Handwritten", "\"Bradley Hand\", \"Segoe Print\", \"Segoe Script\", \"Apple Chancery\", \"Comic Sans MS\", cursive"],
+  ["rounded", "Rounded", "ui-rounded, \"SF Pro Rounded\", \"Varela Round\", \"Trebuchet MS\", system-ui, sans-serif"],
+] as const;
+const diaryPapers = [["cream", "Cream"], ["ivory", "Ivory"], ["blush", "Blush"], ["mint", "Mint"], ["sky", "Sky"], ["lilac", "Lilac"], ["sand", "Sand"], ["slate", "Slate"]] as const;
 const moods: { value: Mood; label: string; symbol: string }[] = [
   { value: "bright", label: "Bright", symbol: "☀" }, { value: "calm", label: "Calm", symbol: "◡" },
   { value: "okay", label: "Okay", symbol: "•" }, { value: "low", label: "Low", symbol: "☁" },
@@ -51,7 +69,18 @@ const decodeTransfer = (value: string) => {
 const dateLabel = (value: string) => value ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)) : "No ETA";
 const isOverdue = (issue: Issue) => !isCompleteStatus(issue.status) && issue.expected && new Date(issue.expected).getTime() < Date.now();
 const daysOverdue = (issue: Issue) => Math.max(1, Math.ceil((Date.now() - new Date(issue.expected).getTime()) / 86400000));
-const dayKey = (value: string) => new Date(value).toISOString().slice(0, 10);
+const dayMs = 86400000;
+const median = (values: number[]) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+const durationLabel = (hours: number) => hours >= 48 ? `${Math.round(hours / 24)}d` : `${hours.toFixed(hours >= 10 ? 0 : 1)}h`;
+/* Local, not UTC: the calendar builds its cell keys from local date parts, so keying
+   entries in UTC put evening work on the following day for anyone west of Greenwich. */
+const dayKey = (value: string) => { const at = new Date(value); return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`; };
+const dayBefore = (key: string) => { const [year, month, day] = key.split("-").map(Number); const at = new Date(year, month - 1, day - 1); return dayKey(at.toISOString()); };
 const peopleFromInput = (value: string) => Array.from(new Map(value.split(/[,;\n]+/).map(person => person.trim()).filter(Boolean).map(person => [person.toLowerCase(), person])).values());
 /* ---------------------------------------------------------------------------
    Diary reflection engine.
@@ -165,6 +194,44 @@ const themeStep: Record<ThemeId, string[]> = {
 };
 const gentleStep = "Keep it small: water, food, daylight, or one honest message to someone you trust. Small is the right size today.";
 
+const moodName = (mood: Mood) => moods.find(item => item.value === mood)?.label ?? "Okay";
+const wordCount = (value: string) => (value.trim() ? value.trim().split(/\s+/).length : 0);
+// A log line is only useful if it says what actually changed, not merely that something did.
+const describeDiaryChange = (before: DiaryEntry, after: { title: string; text: string; mood: Mood }) => {
+  const parts: string[] = [];
+  if (before.mood !== after.mood) parts.push(`mood ${moodName(before.mood).toLowerCase()} → ${moodName(after.mood).toLowerCase()}`);
+  if (before.title.trim() !== after.title.trim()) parts.push(!before.title.trim() ? "title added" : !after.title.trim() ? "title removed" : "title changed");
+  if (before.text.trim() !== after.text.trim()) {
+    const delta = wordCount(after.text) - wordCount(before.text);
+    parts.push(delta > 0 ? `${delta} word${delta === 1 ? "" : "s"} added` : delta < 0 ? `${-delta} word${delta === -1 ? "" : "s"} removed` : "wording reworked");
+  }
+  return parts.length ? parts.join(" · ") : "opened and saved without changes";
+};
+const diaryEventLabel = (action: DiaryAction) => (action === "created" ? "Written" : action === "edited" ? "Edited" : "Deleted");
+
+
+/* ---------------------------------------------------------------------------
+   Diary insights. Every number here is derived on the device from entries the
+   writer already has — nothing is inferred about them beyond what they wrote.
+--------------------------------------------------------------------------- */
+const moodWeight: Record<Mood, number> = { bright: 2, calm: 1, okay: 0, low: -1, anxious: -1, frustrated: -1 };
+const partsOfDay = [
+  { id: "early", label: "Early", note: "before noon", from: 5, to: 11 },
+  { id: "afternoon", label: "Afternoon", note: "midday to five", from: 12, to: 16 },
+  { id: "evening", label: "Evening", note: "after work", from: 17, to: 21 },
+  { id: "night", label: "Late night", note: "after ten", from: 22, to: 4 },
+] as const;
+const partOfDay = (hour: number) => partsOfDay.find(part => (part.from <= part.to ? hour >= part.from && hour <= part.to : hour >= part.from || hour <= part.to)) ?? partsOfDay[1];
+const wordStops = new Set(("about after again against already also always another around back because been before being between both cannot could does doing down during each even ever every first from getting given goes going gone have having here into itself just keep kept last like made make more most much must need never next nothing once only other over really same should some something still such take taken than that their them then there these they thing things think this those three through today together took under until very want week were what when where which while will with without would your yourself").split(" "));
+// Five letters and up, seen at least twice: shorter or rarer words are noise, not signature.
+const signatureWords = (entries: DiaryEntry[]) => {
+  const tally = new Map<string, number>();
+  entries.forEach(entry => (`${entry.title} ${entry.text}`.toLowerCase().match(/[a-z][a-z'-]{4,}/g) || [])
+    .filter(word => !wordStops.has(word))
+    .forEach(word => tally.set(word, (tally.get(word) ?? 0) + 1)));
+  return Array.from(tally.entries()).filter(([, count]) => count > 1).sort((a, b) => b[1] - a[1]).slice(0, 8);
+};
+
 const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEntry[] = [], writtenAt?: string) => {
   const raw = `${title} ${text}`.trim();
   const note = raw.toLowerCase();
@@ -187,11 +254,22 @@ const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEnt
 
   const recent = history.filter(entry => Date.now() - new Date(entry.at).getTime() < 8 * 86400000).slice(0, 8);
   const recurrence = top ? recent.filter(entry => detectThemes(`${entry.title} ${entry.text}`.toLowerCase()).some(theme => theme.id === top.id)).length : 0;
+  const relatedFeedback = top ? history.find(entry => entry.suggestionHelpful !== undefined && detectThemes(`${entry.title} ${entry.text}`.toLowerCase()).some(theme => theme.id === top.id)) : undefined;
   const heavyStreak = heavyMood && history.slice(0, 2).length === 2 && history.slice(0, 2).every(entry => heavyMoods.includes(entry.mood));
   const lifted = (mood === "bright" || mood === "calm") && history[0] && heavyMoods.includes(history[0].mood);
   const positiveContent = themes.some(theme => ["progress", "gratitude", "relief", "hope"].includes(theme.id) && theme.score >= 2);
 
   // 1 — reflect back the specific thing they wrote, in their own words.
+  /* When a theme drives the insight, quote a line that actually carries that theme —
+     quoting the longest sentence instead made the mirror and the insight disagree. */
+  const themedClause = () => {
+    const pattern = top ? themeLexicon.find(theme => theme.id === top.id)?.pattern : undefined;
+    if (!pattern) return strongestClause(text);
+    const carrying = text.split(/[.!?\n]+/).map(tidy).filter(part => part.split(" ").length >= 4)
+      .filter(clause => Array.from(clause.matchAll(pattern)).some(match => !negatorPattern.test(clause.slice(Math.max(0, (match.index ?? 0) - 26), match.index ?? 0))))
+      .sort((a, b) => b.length - a.length);
+    return carrying.length ? clip(carrying[0]) : strongestClause(text);
+  };
   const mirror = need
     ? pickFrom([`You said it yourself: ${quote(need)}`, `The clearest line in this is your own: ${quote(need)}`], seed)
     : question
@@ -199,8 +277,8 @@ const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEnt
       : pivot
         ? pickFrom([`Past the setup, this is where the weight sits: ${quote(pivot)}`, `You moved through the context quickly and landed here: ${quote(pivot)}`], seed)
         : title.trim()
-          ? `“${clip(tidy(title))}” — and the line that carries it is ${quote(strongestClause(text))}`
-          : quote(strongestClause(text));
+          ? `“${clip(tidy(title))}” — and the line that carries it is ${quote(themedClause())}`
+          : quote(themedClause());
 
   // 2 — what the combination suggests, using history where it earns its place.
   let insight: string;
@@ -218,6 +296,11 @@ const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEnt
 
   // 3 — one step, sized to what is actually left in the tank.
   let step = top ? pickFrom(themeStep[top.id], seed) : "Write one sentence for what you need next, then turn that need into the smallest practical action.";
+  if (top && relatedFeedback) {
+    const options = themeStep[top.id];
+    const previousStyle = options.findIndex(option => relatedFeedback.suggestion.includes(option.slice(0, 44)));
+    if (previousStyle >= 0) step = relatedFeedback.suggestionHelpful ? options[previousStyle] : options[(previousStyle + 1) % options.length];
+  }
   // Only name a person where the entry makes it unambiguous who the other side is.
   if (people.length && top?.id === "conflict") step = step.replace(/\bthis person\b/, people[0]).replace(/\bthem\b/, people[0]);
   if (!top && (mood === "low" || heavyMood)) step = gentleStep;
@@ -335,6 +418,12 @@ export default function Home() {
   const [importCode, setImportCode] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [diaryEntries, setDiaryEntries] = useState<DiaryEntry[]>([]);
+  const [diaryLog, setDiaryLog] = useState<DiaryEvent[]>([]);
+  const [editingDiaryId, setEditingDiaryId] = useState("");
+  const [openDiaryId, setOpenDiaryId] = useState("");
+  const [diaryFont, setDiaryFont] = useState("journal");
+  const [diaryPaper, setDiaryPaper] = useState("cream");
+  const [editDraft, setEditDraft] = useState<{ title: string; text: string; mood: Mood }>({ title: "", text: "", mood: "okay" });
   const [diaryMood, setDiaryMood] = useState<Mood>("okay");
   const [diaryTitle, setDiaryTitle] = useState("");
   const [diaryText, setDiaryText] = useState("");
@@ -345,6 +434,9 @@ export default function Home() {
   const [newFollowUpInput, setNewFollowUpInput] = useState("");
   const [filter, setFilter] = useState<"All" | "Mine" | "Overdue">("All");
   const [metricFocus, setMetricFocus] = useState<MetricFocus>("home-open");
+  const [insightRange, setInsightRange] = useState<InsightRange>("30d");
+  const [insightFocus, setInsightFocus] = useState("");
+  const [showPersonalInsights, setShowPersonalInsights] = useState(true);
   const [section, setSection] = useState<"dashboard" | "calendar" | "metrics" | "diary" | "settings">("dashboard");
   const [calendarMonth, setCalendarMonth] = useState(new Date(2026, 7, 1));
   const [selectedDay, setSelectedDay] = useState<string>("2026-08-13");
@@ -361,7 +453,7 @@ export default function Home() {
     let loadedIssues = seed;
     const saved = localStorage.getItem("signal-petal-issues");
     if (saved) {
-      try { loadedIssues = (JSON.parse(saved) as Issue[]).map(i => ({ ...i, followUpPeople: Array.isArray(i.followUpPeople) ? i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()) : [], createdAt: i.createdAt || i.updates?.[0]?.at || new Date().toISOString() })); setIssues(loadedIssues); }
+      try { loadedIssues = (JSON.parse(saved) as Issue[]).map(i => { const createdAt = i.createdAt || i.updates?.[0]?.at || new Date().toISOString(); return { ...i, followUpPeople: Array.isArray(i.followUpPeople) ? i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()) : [], createdAt, statusChangedAt: i.statusChangedAt || createdAt }; }); setIssues(loadedIssues); }
       catch { localStorage.removeItem("signal-petal-issues"); }
     }
     const savedStatuses = localStorage.getItem("signal-petal-statuses");
@@ -380,8 +472,21 @@ export default function Home() {
     setTheme(localStorage.getItem("signal-petal-theme") || "rose");
     setDarkMode(localStorage.getItem("signal-petal-dark") === "true");
     setReminderTime(localStorage.getItem("signal-petal-reminder-time") || "16:30");
+    setDiaryFont(localStorage.getItem("signal-petal-diary-font") || "journal");
+    setDiaryPaper(localStorage.getItem("signal-petal-diary-paper") || "cream");
+    let loadedDiary: DiaryEntry[] = [];
     const savedDiary = localStorage.getItem("signal-petal-diary");
-    if (savedDiary) { try { const parsed = JSON.parse(savedDiary); if (Array.isArray(parsed)) setDiaryEntries(parsed); } catch { localStorage.removeItem("signal-petal-diary"); } }
+    if (savedDiary) { try { const parsed = JSON.parse(savedDiary); if (Array.isArray(parsed)) loadedDiary = parsed; } catch { localStorage.removeItem("signal-petal-diary"); } }
+    setDiaryEntries(loadedDiary);
+    let loadedDiaryLog: DiaryEvent[] = [];
+    const savedDiaryLog = localStorage.getItem("signal-petal-diary-log");
+    if (savedDiaryLog) { try { const parsed = JSON.parse(savedDiaryLog); if (Array.isArray(parsed)) loadedDiaryLog = parsed; } catch { localStorage.removeItem("signal-petal-diary-log"); } }
+    // Reflections written before the log existed still deserve a place on the calendar.
+    const alreadyLogged = new Set(loadedDiaryLog.filter(event => event.action === "created").map(event => event.entryId));
+    const backfilled = loadedDiary
+      .filter(entry => !alreadyLogged.has(entry.id))
+      .map<DiaryEvent>(entry => ({ id: `backfill-${entry.id}`, entryId: entry.id, at: entry.at, action: "created", title: entry.title, mood: entry.mood, detail: `${wordCount(entry.text)} word${wordCount(entry.text) === 1 ? "" : "s"}` }));
+    setDiaryLog([...backfilled, ...loadedDiaryLog].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()));
     const savedReminders = localStorage.getItem("signal-petal-reminders-enabled");
     if ("Notification" in window) setRemindersEnabled(Notification.permission === "granted" && savedReminders !== "false");
     setHydrated(true);
@@ -393,13 +498,16 @@ export default function Home() {
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminders-enabled", String(remindersEnabled)); }, [remindersEnabled, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminder-time", reminderTime); }, [reminderTime, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-diary", JSON.stringify(diaryEntries)); }, [diaryEntries, hydrated]);
+  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-diary-log", JSON.stringify(diaryLog)); }, [diaryLog, hydrated]);
+  useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-diary-font", diaryFont); localStorage.setItem("signal-petal-diary-paper", diaryPaper); } }, [diaryFont, diaryPaper, hydrated]);
   useEffect(() => { if (hydrated && profile) { localStorage.setItem("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
   useEffect(() => { void notificationWorker(); }, []);
   useEffect(() => {
-    if (!showDetail && !showCreate && !showDeleteConfirm) return;
+    if (!showDetail && !showCreate && !showDeleteConfirm && !openDiaryId) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (showDeleteConfirm) setShowDeleteConfirm(false);
+        else if (openDiaryId) { setOpenDiaryId(""); setEditingDiaryId(""); }
         else if (showCreate) setShowCreate(false);
         else setShowDetail(false);
       }
@@ -408,7 +516,7 @@ export default function Home() {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", closeOnEscape); document.body.style.overflow = previousOverflow; };
-  }, [showDetail, showCreate, showDeleteConfirm]);
+  }, [showDetail, showCreate, showDeleteConfirm, openDiaryId]);
   /* The scheduler reads the live queue through a ref so that editing an issue no longer
      tears down and restarts the one-minute timer. */
   const issuesRef = useRef(issues);
@@ -459,6 +567,10 @@ export default function Home() {
     : permission === "denied" ? "Blocked — allow in your browser settings"
     : permission === "default" ? "Off — turn on to allow notifications"
     : remindersOn ? "Notifications on" : "Allowed, reminders paused";
+  const diaryFontStack = (diaryFonts.find(font => font[0] === diaryFont) ?? diaryFonts[0])[2];
+  const diarySkin = { "--diary-font": diaryFontStack } as CSSProperties;
+  const openEntry = diaryEntries.find(entry => entry.id === openDiaryId);
+  const openEntryIndex = diaryEntries.findIndex(entry => entry.id === openDiaryId);
   const personalOwner = profile?.name || "You";
   const openCount = issues.filter(i => !isCompleteStatus(i.status)).length;
   const overdueCount = issues.filter(isOverdue).length;
@@ -491,25 +603,259 @@ export default function Home() {
   }, [issues, filter, metricFocus, personalOwner, searchQuery]);
   const dashboardView = filter === "Mine" ? "mine" : filter === "Overdue" ? "attention" : "overview";
   const pageTitle = section === "calendar" ? "Your work calendar ✦" : section === "metrics" ? "Signals & progress ✦" : section === "diary" ? "A quiet place to land ✦" : section === "settings" ? "Settings ✦" : filter === "Mine" ? "My actions ✦" : filter === "Overdue" ? "Needs attention" : `Good afternoon, ${profile?.role || "there"} ✦`;
-  const pageDescription = section === "calendar" ? "Choose a day to see every task and issue you logged." : section === "metrics" ? "A clear read on delivery pace, follow-through, and where to focus." : section === "diary" ? "Vent freely, name the mood, and leave with one gentle next step." : section === "settings" ? "Personalize your workspace, workflow, notifications, and local data." : filter === "Mine" ? "Your personal action list, separated from the wider team queue." : filter === "Overdue" ? "A focused triage view for work that has passed its expected update." : "A lovely little command center for keeping work moving.";
+  const pageDescription = section === "calendar" ? "Choose a day to see the tasks you logged and the diary activity that went with them." : section === "metrics" ? "A clear read on delivery pace, follow-through, and where to focus." : section === "diary" ? "Vent freely, name the mood, and leave with one gentle next step." : section === "settings" ? "Personalize your workspace, workflow, notifications, and local data." : filter === "Mine" ? "Your personal action list, separated from the wider team queue." : filter === "Overdue" ? "A focused triage view for work that has passed its expected update." : "A lovely little command center for keeping work moving.";
   const ownerReport = useMemo(() => Object.entries(issues.reduce<Record<string, number>>((map, i) => { if (!isCompleteStatus(i.status)) map[i.owner] = (map[i.owner] || 0) + 1; return map; }, {})).sort((a,b) => b[1]-a[1]), [issues]);
+  const diaryInsights = useMemo(() => {
+    if (!diaryEntries.length) return null;
+    const entries = [...diaryEntries].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * dayMs;
+    const fourteenDaysAgo = now - 14 * dayMs;
+    const recentEntries = entries.filter(entry => new Date(entry.at).getTime() >= sevenDaysAgo);
+    const previousEntries = entries.filter(entry => { const at = new Date(entry.at).getTime(); return at >= fourteenDaysAgo && at < sevenDaysAgo; });
+    const words = entries.map(entry => wordCount(entry.text));
+    const totalWords = words.reduce((sum, count) => sum + count, 0);
+    const averageMood = (group: DiaryEntry[]) => group.length ? group.reduce((sum, entry) => sum + moodWeight[entry.mood], 0) / group.length : null;
+    const heavyShare = (group: DiaryEntry[]) => group.length ? Math.round((group.filter(entry => moodWeight[entry.mood] < 0).length / group.length) * 100) : null;
+    const confidence = (sample: number) => sample >= 8 ? "Reliable pattern" : sample >= 4 ? "Emerging pattern" : "Early signal";
+    const recentAverage = averageMood(recentEntries);
+    const previousAverage = averageMood(previousEntries);
+    const moodDelta = recentAverage !== null && previousAverage !== null ? recentAverage - previousAverage : null;
+    const pulseDirection = moodDelta === null ? "Gathering a baseline" : moodDelta > .35 ? "Feeling lighter" : moodDelta < -.35 ? "Carrying more weight" : "Holding steady";
+    const pulse = { currentCount: recentEntries.length, previousCount: previousEntries.length, currentAverage: recentAverage, previousAverage, delta: moodDelta, heavy: heavyShare(recentEntries), previousHeavy: heavyShare(previousEntries), direction: pulseDirection, confidence: confidence(recentEntries.length + previousEntries.length) };
+
+    // Streaks are counted in days written, not entries — two entries in one evening is one day.
+    const days = Array.from(new Set(entries.map(entry => dayKey(entry.at)))).sort();
+    let longestStreak = 1;
+    let run = 1;
+    days.forEach((day, index) => {
+      if (index === 0) return;
+      run = dayBefore(day) === days[index - 1] ? run + 1 : 1;
+      longestStreak = Math.max(longestStreak, run);
+    });
+    const today = dayKey(new Date().toISOString());
+    const latest = days[days.length - 1];
+    let currentStreak = latest === today || latest === dayBefore(today) ? 1 : 0;
+    if (currentStreak) for (let index = days.length - 1; index > 0; index -= 1) {
+      if (dayBefore(days[index]) !== days[index - 1]) break;
+      currentStreak += 1;
+    }
+
+    const moodCounts = moods.map(mood => ({ ...mood, count: entries.filter(entry => entry.mood === mood.value).length }));
+    const topMood = [...moodCounts].sort((a, b) => b.count - a.count)[0];
+    const ribbon = entries.slice(-28);
+
+    const themeTally = new Map<ThemeId, { id: ThemeId; label: string; count: number; entries: DiaryEntry[] }>();
+    entries.forEach(entry => {
+      const seen = new Set<ThemeId>();
+      detectThemes(`${entry.title} ${entry.text}`.toLowerCase()).forEach(theme => {
+        if (seen.has(theme.id)) return;
+        seen.add(theme.id);
+        const current = themeTally.get(theme.id);
+        themeTally.set(theme.id, { id: theme.id, label: theme.label, count: (current?.count ?? 0) + 1, entries: [...(current?.entries ?? []), entry] });
+      });
+    });
+    const positiveThemes = new Set<ThemeId>(["progress", "gratitude", "hope", "relief"]);
+    const themePatterns = Array.from(themeTally.values()).map(theme => {
+      const currentCount = theme.entries.filter(entry => new Date(entry.at).getTime() >= sevenDaysAgo).length;
+      const previousCount = theme.entries.filter(entry => { const at = new Date(entry.at).getTime(); return at >= fourteenDaysAgo && at < sevenDaysAgo; }).length;
+      const average = averageMood(theme.entries) ?? 0;
+      const tone = positiveThemes.has(theme.id) || average > .35 ? "support" : average < -.2 ? "drain" : "mixed";
+      const trend = currentCount > previousCount ? (previousCount ? "rising" : "new this week") : currentCount < previousCount ? "easing" : "steady";
+      const evidence = theme.entries[theme.entries.length - 1];
+      return { ...theme, currentCount, previousCount, average, tone, trend, confidence: confidence(theme.count), evidence, excerpt: clip(strongestClause(evidence.text), 118) };
+    }).sort((a, b) => b.count - a.count || Math.abs(b.average) - Math.abs(a.average));
+    const themes = themePatterns.slice(0, 5);
+    const influences = [...themePatterns].sort((a, b) => {
+      const tonePriority = (value: string) => value === "mixed" ? 0 : 1;
+      return tonePriority(b.tone) - tonePriority(a.tone) || b.count - a.count || Math.abs(b.average) - Math.abs(a.average);
+    }).slice(0, 4);
+
+    const clock = partsOfDay.map(part => ({ ...part, count: entries.filter(entry => partOfDay(new Date(entry.at).getHours()).id === part.id).length }));
+    const favouriteTime = [...clock].sort((a, b) => b.count - a.count)[0];
+
+    const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const weekdays = weekdayNames.map((name, index) => {
+      const onDay = entries.filter(entry => new Date(entry.at).getDay() === index);
+      return { name, count: onDay.length, weight: onDay.length ? onDay.reduce((sum, entry) => sum + moodWeight[entry.mood], 0) / onDay.length : 0 };
+    }).filter(day => day.count > 0);
+    const brightestDay = [...weekdays].sort((a, b) => b.weight - a.weight)[0];
+    const heaviestDay = [...weekdays].sort((a, b) => a.weight - b.weight)[0];
+
+    const revisited = new Set(diaryLog.filter(event => event.action === "edited").map(event => event.entryId)).size;
+
+    // The biggest jump between two entries in a row — worth knowing what moved.
+    let lift: { from: DiaryEntry; to: DiaryEntry; gain: number } | null = null;
+    entries.forEach((entry, index) => {
+      if (!index) return;
+      const gain = moodWeight[entry.mood] - moodWeight[entries[index - 1].mood];
+      if (gain > 0 && gain >= (lift?.gain ?? 1)) lift = { from: entries[index - 1], to: entry, gain };
+    });
+
+    // Reconstruct the queue that was open when each page was written. This is a closer
+    // workload signal than counting tasks created that day, and it includes overdue and
+    // follow-up load without pretending that association proves causation.
+    const workload = entries.map(entry => {
+      const at = new Date(entry.at).getTime();
+      const open = issues.filter(issue => {
+        const created = new Date(issue.createdAt).getTime();
+        const completed = issue.completedAt ? new Date(issue.completedAt).getTime() : Number.POSITIVE_INFINITY;
+        return created <= at && completed > at;
+      });
+      const overdue = open.filter(issue => issue.expected && new Date(issue.expected).getTime() < at).length;
+      const followUps = open.reduce((sum, issue) => sum + issue.followUpPeople.length, 0);
+      return { entry, open: open.length, overdue, followUps, score: open.length + overdue * 1.5 + followUps * .25 };
+    });
+    const workloadThreshold = median(workload.map(item => item.score));
+    const onBusy = workload.filter(item => item.score > workloadThreshold).map(item => item.entry);
+    const onQuiet = workload.filter(item => item.score <= workloadThreshold).map(item => item.entry);
+    const crossover = onBusy.length >= 3 && onQuiet.length >= 3 ? { busy: heavyShare(onBusy) ?? 0, quiet: heavyShare(onQuiet) ?? 0, busyCount: onBusy.length, quietCount: onQuiet.length, threshold: Math.round(workloadThreshold * 10) / 10 } : null;
+
+    const weeklyThemes = new Map<ThemeId, { id: ThemeId; label: string; count: number }>();
+    recentEntries.forEach(entry => {
+      const seen = new Set<ThemeId>();
+      detectThemes(`${entry.title} ${entry.text}`.toLowerCase()).forEach(theme => {
+        if (seen.has(theme.id)) return;
+        seen.add(theme.id);
+        const current = weeklyThemes.get(theme.id);
+        weeklyThemes.set(theme.id, { id: theme.id, label: theme.label, count: (current?.count ?? 0) + 1 });
+      });
+    });
+    const repeating = [...weeklyThemes.values()].sort((a, b) => b.count - a.count)[0];
+    const lifted = [...recentEntries].filter(entry => moodWeight[entry.mood] > 0).sort((a, b) => moodWeight[b.mood] - moodWeight[a.mood] || new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+    const drained = [...recentEntries].filter(entry => moodWeight[entry.mood] < 0).sort((a, b) => moodWeight[a.mood] - moodWeight[b.mood] || new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+    const weekly = {
+      count: recentEntries.length,
+      lifted: lifted ? { entry: lifted, excerpt: clip(strongestClause(lifted.text), 105) } : null,
+      drained: drained ? { entry: drained, excerpt: clip(strongestClause(drained.text), 105) } : null,
+      repeating,
+      experiment: repeating ? themeStep[repeating.id][0] : "Name one moment that changed your mood this week, then make one small choice that gives you more of the useful part.",
+    };
+    const feedback = {
+      tried: entries.filter(entry => entry.suggestionTried).length,
+      rated: entries.filter(entry => entry.suggestionHelpful !== undefined).length,
+      helpful: entries.filter(entry => entry.suggestionHelpful === true).length,
+    };
+
+    return { entries, recentEntries, previousEntries, pulse, totalWords, longestWords: Math.max(...words), averageWords: Math.round(totalWords / entries.length), currentStreak, longestStreak, daysWritten: days.length, moodCounts, topMood, ribbon, themes, influences, clock, favouriteTime, brightestDay, heaviestDay, revisited, lift: lift as { from: DiaryEntry; to: DiaryEntry; gain: number } | null, crossover, weekly, feedback, words: signatureWords(entries) };
+  }, [diaryEntries, diaryLog, issues]);
+
   const calendarDays = useMemo(() => { const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1); const end = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0); return Array.from({ length: start.getDay() + end.getDate() }, (_, i) => i - start.getDay() + 1); }, [calendarMonth]);
   const selectedIssues = issues.filter(i => dayKey(i.createdAt) === selectedDay);
+  // Diary events sit beside issues on the calendar; only mood and title are shown, never the reflection.
+  const selectedDiary = diaryLog.filter(event => dayKey(event.at) === selectedDay).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   const monthTitle = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(calendarMonth);
   const resolvedIssues = issues.filter(i => isCompleteStatus(i.status));
-  const completedWithTime = resolvedIssues.filter(i => i.completedAt || i.updates.length);
-  const completionHours = completedWithTime.map(i => (new Date(i.completedAt || i.updates[i.updates.length - 1].at).getTime() - new Date(i.createdAt).getTime()) / 3600000).filter(h => h >= 0);
-  const averageHours = completionHours.length ? completionHours.reduce((sum, h) => sum + h, 0) / completionHours.length : 0;
-  const dueResolved = resolvedIssues.filter(i => i.expected && (i.completedAt || i.updates.length));
-  const onTimeCount = dueResolved.filter(i => new Date(i.completedAt || i.updates[i.updates.length - 1].at).getTime() <= new Date(i.expected).getTime()).length;
-  const onTimeRate = dueResolved.length ? Math.round((onTimeCount / dueResolved.length) * 100) : 0;
-  const health = overdueCount > 0 || (dueResolved.length > 0 && onTimeRate < 80) ? "Needs improvement" : "Looking healthy";
+  const taskInsights = useMemo(() => {
+    const now = Date.now();
+    const rangeDays = insightRange === "all" ? null : Number(insightRange.slice(0, -1));
+    const validTime = (value?: string) => value ? new Date(value).getTime() : Number.NaN;
+    const knownTimes = issues.flatMap(issue => [validTime(issue.createdAt), validTime(issue.completedAt)]).filter(Number.isFinite);
+    const earliest = knownTimes.length ? Math.min(...knownTimes) : now;
+    const rangeStart = rangeDays ? now - rangeDays * dayMs : earliest;
+    const previousStart = rangeDays ? rangeStart - rangeDays * dayMs : rangeStart;
+    const inWindow = (value: string | undefined, from = rangeStart, to = now) => { const at = validTime(value); return Number.isFinite(at) && at >= from && at <= to; };
+    const created = issues.filter(issue => inWindow(issue.createdAt));
+    const completed = issues.filter(issue => isCompleteStatus(issue.status) && inWindow(issue.completedAt));
+    const previousCreated = rangeDays ? issues.filter(issue => inWindow(issue.createdAt, previousStart, rangeStart)) : [];
+    const previousCompleted = rangeDays ? issues.filter(issue => isCompleteStatus(issue.status) && inWindow(issue.completedAt, previousStart, rangeStart)) : [];
+    const open = issues.filter(issue => !isCompleteStatus(issue.status));
+    const overdue = open.filter(isOverdue);
+    const latestActivity = (issue: Issue) => Math.max(validTime(issue.createdAt) || 0, ...issue.updates.map(update => validTime(update.at) || 0));
+    const stale = open.filter(issue => now - latestActivity(issue) >= 7 * dayMs);
+    const dueSoon = open.filter(issue => { const due = validTime(issue.expected); return Number.isFinite(due) && due >= now && due <= now + dayMs; });
+    const overdueOneToThree = overdue.filter(issue => { const days = Math.ceil((now - validTime(issue.expected)) / dayMs); return days <= 3; });
+    const overdueFourToSeven = overdue.filter(issue => { const days = Math.ceil((now - validTime(issue.expected)) / dayMs); return days >= 4 && days <= 7; });
+    const overdueEightPlus = overdue.filter(issue => Math.ceil((now - validTime(issue.expected)) / dayMs) >= 8);
+    const noEta = open.filter(issue => !issue.expected);
+
+    const problemsFor = (issue: Issue) => {
+      const problems: string[] = [];
+      if (!issue.owner.trim()) problems.push("owner");
+      if (!issue.expected) problems.push("ETA");
+      if (!issue.action.trim()) problems.push("current action");
+      if (isCompleteStatus(issue.status) && !issue.outcome.trim()) problems.push("outcome");
+      if (isCompleteStatus(issue.status) && !issue.completedAt) problems.push("completion timestamp");
+      return problems;
+    };
+    const qualityProblems = new Map(issues.map(issue => [issue.id, problemsFor(issue)]));
+    const qualityIssues = issues.filter(issue => (qualityProblems.get(issue.id)?.length || 0) > 0);
+    const qualityCounts = {
+      eta: issues.filter(issue => !issue.expected).length,
+      action: issues.filter(issue => !issue.action.trim()).length,
+      outcome: issues.filter(issue => isCompleteStatus(issue.status) && !issue.outcome.trim()).length,
+      completion: issues.filter(issue => isCompleteStatus(issue.status) && !issue.completedAt).length,
+    };
+
+    const completionHours = completed.map(issue => (validTime(issue.completedAt) - validTime(issue.createdAt)) / 3600000).filter(hours => Number.isFinite(hours) && hours >= 0);
+    const sortedCompletion = [...completionHours].sort((a, b) => a - b);
+    const medianHours = median(completionHours);
+    const p75Hours = sortedCompletion.length ? sortedCompletion[Math.min(sortedCompletion.length - 1, Math.ceil(sortedCompletion.length * .75) - 1)] : 0;
+    const dueCompleted = completed.filter(issue => issue.expected && issue.completedAt);
+    const onTimeCount = dueCompleted.filter(issue => validTime(issue.completedAt) <= validTime(issue.expected)).length;
+    const onTimeRate = dueCompleted.length ? Math.round((onTimeCount / dueCompleted.length) * 100) : 0;
+
+    const statusGroups = statuses.map(status => {
+      const items = open.filter(issue => issue.status === status);
+      const ages = items.map(issue => Math.max(0, (now - validTime(issue.statusChangedAt || issue.createdAt)) / dayMs));
+      return { status, items, count: items.length, medianAge: median(ages) };
+    }).filter(group => group.count).sort((a, b) => b.count - a.count || b.medianAge - a.medianAge);
+
+    const ownerMap = new Map<string, Issue[]>();
+    open.forEach(issue => ownerMap.set(issue.owner || "Unassigned", [...(ownerMap.get(issue.owner || "Unassigned") || []), issue]));
+    const ownerGroups = Array.from(ownerMap, ([owner, items]) => ({ owner, items, overdue: items.filter(isOverdue).length, stale: items.filter(item => stale.some(issue => issue.id === item.id)).length, followUps: items.reduce((sum, item) => sum + item.followUpPeople.length, 0) })).sort((a, b) => b.items.length - a.items.length || b.overdue - a.overdue);
+
+    const bucketCount = insightRange === "7d" ? 7 : 6;
+    const span = Math.max(dayMs, now - rangeStart);
+    const bucketSize = span / bucketCount;
+    const flow = Array.from({ length: bucketCount }, (_, index) => {
+      const from = rangeStart + bucketSize * index;
+      const to = index === bucketCount - 1 ? now + 1 : from + bucketSize;
+      return {
+        label: new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(from)),
+        created: issues.filter(issue => inWindow(issue.createdAt, from, to)).length,
+        completed: issues.filter(issue => isCompleteStatus(issue.status) && inWindow(issue.completedAt, from, to)).length,
+      };
+    });
+    const flowMax = Math.max(1, ...flow.flatMap(bucket => [bucket.created, bucket.completed]));
+
+    const focusItems: Record<string, Issue[]> = { created, completed, overdue, stale, quality: qualityIssues, "age:soon": dueSoon, "age:1-3": overdueOneToThree, "age:4-7": overdueFourToSeven, "age:8+": overdueEightPlus, "age:no-eta": noEta };
+    const focusLabels: Record<string, string> = { created: "Work logged in this period", completed: "Work completed in this period", overdue: "Currently overdue", stale: "No update for 7+ days", quality: "Tasks with missing information", "age:soon": "Due within 24 hours", "age:1-3": "Overdue by 1–3 days", "age:4-7": "Overdue by 4–7 days", "age:8+": "Overdue by 8+ days", "age:no-eta": "Open work without an ETA" };
+    statusGroups.forEach(group => { focusItems[`status:${group.status}`] = group.items; focusLabels[`status:${group.status}`] = `${group.status} work`; });
+    ownerGroups.forEach(group => { focusItems[`owner:${group.owner}`] = group.items; focusLabels[`owner:${group.owner}`] = `${group.owner}'s open work`; });
+
+    const deliveryScore = open.length ? Math.max(0, 100 - Math.round((overdue.length / open.length) * 100)) : 100;
+    const freshnessScore = open.length ? Math.max(0, 100 - Math.round((stale.length / open.length) * 100)) : 100;
+    const documentationScore = issues.length ? Math.max(0, 100 - Math.round((qualityIssues.length / issues.length) * 100)) : 100;
+    const reliabilityScore = dueCompleted.length ? onTimeRate : 100;
+    const healthScore = Math.round((deliveryScore + freshnessScore + documentationScore + reliabilityScore) / 4);
+    const healthLabel = healthScore >= 85 ? "Looking healthy" : healthScore >= 65 ? "Watch the flow" : "Needs attention";
+    const rangeLabel = insightRange === "all" ? "All time" : `Last ${rangeDays} days`;
+    const backlogDelta = created.length - completed.length;
+    const bottleneck = statusGroups[0];
+    const narrative = `${completed.length} ${completed.length === 1 ? "item was" : "items were"} completed and ${created.length} ${created.length === 1 ? "was" : "were"} logged in ${rangeLabel.toLowerCase()}. ${backlogDelta > 0 ? `The queue grew by ${backlogDelta}.` : backlogDelta < 0 ? `The queue reduced by ${Math.abs(backlogDelta)}.` : "The queue held steady."}${overdue.length ? ` ${overdue.length} ${overdue.length === 1 ? "item is" : "items are"} overdue.` : " Nothing is overdue."}${bottleneck ? ` ${bottleneck.status} is the busiest active stage with ${bottleneck.count}.` : " There is no active bottleneck."}`;
+    const nextActions = [
+      overdue.length ? `Start with the ${overdueEightPlus.length ? `${overdueEightPlus.length} item${overdueEightPlus.length === 1 ? "" : "s"} overdue by more than a week` : `${overdue.length} overdue item${overdue.length === 1 ? "" : "s"}`}.` : "Keep the current follow-up rhythm.",
+      stale.length ? `Refresh ${stale.length} task${stale.length === 1 ? "" : "s"} with no update in seven days.` : "Every open task has a recent update.",
+      qualityIssues.length ? `Complete missing information on ${qualityIssues.length} task${qualityIssues.length === 1 ? "" : "s"}.` : "Task records are complete enough for reliable reporting.",
+    ];
+
+    return { rangeDays, rangeLabel, created, completed, previousCreated, previousCompleted, open, overdue, stale, dueSoon, overdueOneToThree, overdueFourToSeven, overdueEightPlus, noEta, qualityIssues, qualityProblems, qualityCounts, completionHours, medianHours, p75Hours, dueCompleted, onTimeCount, onTimeRate, statusGroups, ownerGroups, flow, flowMax, focusItems, focusLabels, deliveryScore, freshnessScore, documentationScore, reliabilityScore, healthScore, healthLabel, narrative, nextActions };
+  }, [issues, statuses, insightRange]);
+  const insightFocusItems = insightFocus ? taskInsights.focusItems[insightFocus] || [] : [];
+  const insightFocusLabel = insightFocus ? taskInsights.focusLabels[insightFocus] || "Insight details" : "";
   const appName = profile ? `${profile.name}'s Signal Petal` : "Signal Petal";
   const completionLabel = statuses.find(isCompleteStatus) || "Resolved";
   const queueTitle = filter === "Mine" ? metricFocus === "mine-open" ? "My open actions" : metricFocus === "mine-overdue" ? "My overdue actions" : metricFocus === "mine-resolved" ? `My ${completionLabel.toLowerCase()} actions` : "All my actions" : filter === "Overdue" ? metricFocus === "attention-oldest" ? "Oldest delayed item" : metricFocus === "attention-owners" ? "Overdue work by owner" : metricFocus === "attention-first" ? "First move to make" : "All overdue work" : metricFocus === "home-resolved" ? completionLabel : metricFocus === "home-overdue" ? "Needs attention" : "Open work";
   const statusStyle = (status: Status) => ({ "--status-color": statusColors[status] || "#7a5aa6" } as CSSProperties);
 
-  function updateIssue(patch: Partial<Issue>) { if (!active) return; const completedAt = patch.status && isCompleteStatus(patch.status) && !isCompleteStatus(active.status) ? new Date().toISOString() : patch.status && !isCompleteStatus(patch.status) ? undefined : active.completedAt; setIssues(items => items.map(i => i.id === active.id ? { ...i, ...patch, completedAt } : i)); }
+  function updateIssue(patch: Partial<Issue>) {
+    if (!active) return;
+    const now = new Date().toISOString();
+    const statusChanged = Boolean(patch.status && patch.status !== active.status);
+    const completedAt = patch.status && isCompleteStatus(patch.status) && !isCompleteStatus(active.status) ? now : patch.status && !isCompleteStatus(patch.status) ? undefined : active.completedAt;
+    setIssues(items => items.map(i => i.id === active.id ? { ...i, ...patch, completedAt, statusChangedAt: statusChanged ? now : i.statusChangedAt || i.createdAt } : i));
+  }
   function changeOwner(value: string) {
     if (!active) return;
     const nextOwner = value.trim();
@@ -550,7 +896,7 @@ export default function Home() {
     })));
     setStatusInput("");
     setStatusError("");
-    setTransferCode(encodeTransfer({ version: 1, issues, statuses, statusColors, diaryEntries }));
+    setTransferCode(encodeTransfer({ version: 1, issues, statuses, statusColors, diaryEntries, diaryLog }));
     setImportCode("");
     setTransferMessage("");
     setSection("settings");
@@ -571,7 +917,8 @@ export default function Home() {
     if (new Set(names.map(name => name.toLowerCase())).size !== names.length) return setStatusError("Status names must be unique.");
     const renamed = new Map(statusDraft.filter(item => item.original).map(item => [item.original as string, item.name.trim()]));
     const keptOriginals = new Set(statusDraft.flatMap(item => item.original ? [item.original] : []));
-    setIssues(items => items.map(issue => renamed.has(issue.status) ? { ...issue, status: renamed.get(issue.status) as Status } : statuses.includes(issue.status) && !keptOriginals.has(issue.status) ? { ...issue, status: "Ongoing", completedAt: undefined } : issue));
+    const now = new Date().toISOString();
+    setIssues(items => items.map(issue => renamed.has(issue.status) ? { ...issue, status: renamed.get(issue.status) as Status } : statuses.includes(issue.status) && !keptOriginals.has(issue.status) ? { ...issue, status: "Ongoing", completedAt: undefined, statusChangedAt: now } : issue));
     setStatusColors(Object.fromEntries(statusDraft.map(item => [item.name.trim(), item.color])));
     setStatuses(names);
     setStatusError("");
@@ -588,10 +935,11 @@ export default function Home() {
     try {
       const payload = decodeTransfer(importCode.trim());
       if (payload.version !== 1 || !Array.isArray(payload.issues) || !Array.isArray(payload.statuses) || !payload.statusColors || typeof payload.statusColors !== "object") throw new Error("Invalid backup");
-      setIssues(payload.issues.map(issue => ({ ...issue, followUpPeople: Array.isArray(issue.followUpPeople) ? issue.followUpPeople : [] })));
+      setIssues(payload.issues.map(issue => ({ ...issue, followUpPeople: Array.isArray(issue.followUpPeople) ? issue.followUpPeople : [], statusChangedAt: issue.statusChangedAt || issue.createdAt })));
       setStatuses(payload.statuses);
       setStatusColors(payload.statusColors);
       if (Array.isArray(payload.diaryEntries)) setDiaryEntries(payload.diaryEntries);
+      if (Array.isArray(payload.diaryLog)) setDiaryLog(payload.diaryLog);
       setActiveId(payload.issues[0]?.id ?? "");
       setTransferCode(encodeTransfer(payload));
       setTransferMessage(`${payload.issues.length} task${payload.issues.length === 1 ? "" : "s"} imported successfully.`);
@@ -599,7 +947,7 @@ export default function Home() {
     } catch { setTransferMessage("That backup code is not valid. Copy it again from the other Signal Petal address."); }
   }
   function addUpdate(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const text = String(form.get("update") || "").trim(); if (!text || !active) return; updateIssue({ updates: [...active.updates, { id: crypto.randomUUID(), at: new Date().toISOString(), author: personalOwner, text }] }); event.currentTarget.reset(); }
-  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const issue: Issue = { id: crypto.randomUUID(), title: String(form.get("title")), details: String(form.get("details")), owner: String(form.get("owner")) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, status: "New", outcome: "", followUpPeople: newFollowUps, updates: [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }] }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setShowCreate(false); setShowDetail(true); }
+  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const issue: Issue = { id: crypto.randomUUID(), title: String(form.get("title")), details: String(form.get("details")), owner: String(form.get("owner")) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, statusChangedAt: now, status: "New", outcome: "", followUpPeople: newFollowUps, updates: [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }] }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setShowCreate(false); setShowDetail(true); }
   function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = String(form.get("name") || "").trim(); const role = String(form.get("role") || "").trim(); if (name && role) setProfile({ name, role }); }
   async function requestNotificationPermission() {
     if (!("Notification" in window)) { setReminderFeedback("This browser does not support web notifications."); return "unsupported" as const; }
@@ -631,6 +979,9 @@ export default function Home() {
       "Test notification",
     ));
   }
+  function recordDiaryEvent(entry: { id: string; title: string; mood: Mood }, action: DiaryAction, detail: string, at = new Date().toISOString()) {
+    setDiaryLog(events => [{ id: crypto.randomUUID(), entryId: entry.id, at, action, title: entry.title, mood: entry.mood, detail }, ...events]);
+  }
   function addDiaryEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = diaryText.trim();
@@ -639,9 +990,37 @@ export default function Home() {
     const suggestion = diarySuggestion(diaryMood, text, diaryTitle, diaryEntries, at);
     const entry: DiaryEntry = { id: crypto.randomUUID(), at, title: diaryTitle.trim(), text, mood: diaryMood, suggestion };
     setDiaryEntries(items => [entry, ...items]);
+    recordDiaryEvent(entry, "created", `${wordCount(text)} word${wordCount(text) === 1 ? "" : "s"}`, at);
     setDiaryInsight(suggestion);
     setDiaryTitle("");
     setDiaryText("");
+  }
+  function startDiaryEdit(entry: DiaryEntry) {
+    setEditingDiaryId(entry.id);
+    setEditDraft({ title: entry.title, text: entry.text, mood: entry.mood });
+  }
+  function cancelDiaryEdit() { setEditingDiaryId(""); }
+  function saveDiaryEdit(event: FormEvent<HTMLFormElement>, entry: DiaryEntry, index: number) {
+    event.preventDefault();
+    const text = editDraft.text.trim();
+    if (!text) return;
+    const updatedAt = new Date().toISOString();
+    const detail = describeDiaryChange(entry, { ...editDraft, text });
+    // The reflection is rewritten from the new words, using the entries that preceded this one.
+    const suggestion = diarySuggestion(editDraft.mood, text, editDraft.title, diaryEntries.slice(index + 1), entry.at);
+    setDiaryEntries(items => items.map(item => item.id === entry.id ? { ...item, title: editDraft.title.trim(), text, mood: editDraft.mood, suggestion, updatedAt } : item));
+    recordDiaryEvent({ id: entry.id, title: editDraft.title.trim(), mood: editDraft.mood }, "edited", detail, updatedAt);
+    setDiaryInsight(suggestion);
+    setEditingDiaryId("");
+  }
+  function deleteDiaryEntry(entry: DiaryEntry) {
+    setDiaryEntries(items => items.filter(item => item.id !== entry.id));
+    recordDiaryEvent(entry, "deleted", `written ${dateLabel(entry.at)}`);
+    if (editingDiaryId === entry.id) setEditingDiaryId("");
+    if (openDiaryId === entry.id) setOpenDiaryId("");
+  }
+  function updateSuggestionFeedback(entryId: string, patch: Pick<DiaryEntry, "suggestionTried" | "suggestionHelpful">) {
+    setDiaryEntries(items => items.map(item => item.id === entryId ? { ...item, ...patch } : item));
   }
 
   return <main className={`theme-${theme} ${darkMode ? "dark-mode" : ""}`}>
@@ -658,15 +1037,154 @@ export default function Home() {
         <aside className={`report-panel report-${dashboardView}`}>{filter === "Mine" ? <><p className="eyebrow">PERSONAL SNAPSHOT</p><h2>Your workload</h2><div className="focus-stat"><span>In progress</span><strong>{mineOpen.length}</strong></div><div className="focus-stat"><span>Overdue</span><strong>{mineOverdue.length}</strong></div><div className="focus-stat"><span>Completed</span><strong>{mineResolved.length}</strong></div><div className="report-divider"/><p className="eyebrow">FOCUS PROMPT</p><p className="report-note">Choose one clear next action, add an update, and keep your personal queue moving.</p></> : filter === "Overdue" ? <><p className="eyebrow">TRIAGE ORDER</p><h2>Oldest first</h2><div className="triage-list">{attentionQueue.slice(0, 3).map((issue, index) => <button key={issue.id} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><em>{index + 1}</em><span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.expected)}</small></span></button>)}{!attentionQueue.length && <p className="report-note">Your priority queue is clear.</p>}</div><div className="report-divider"/><p className="eyebrow">RECOVERY RHYTHM</p><p className="report-note">Confirm the owner, record the next step, and reset the expected update.</p></> : <><p className="eyebrow">AT A GLANCE</p><h2>Workload by owner</h2>{ownerReport.map(([owner,count]) => <div className="owner" key={owner}><div className="avatar">{owner.charAt(0)}</div><span>{owner}</span><strong>{count}</strong></div>)}<div className="report-divider"/><p className="eyebrow">WEEKLY OUTCOMES</p><p className="report-note">{completionLabel} work is retained with its outcome, so your weekly review writes itself.</p></>}</aside>
       </section>
       </>}
-      {section === "calendar" && <section className="calendar-layout"><div className="calendar-panel"><div className="calendar-toolbar"><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{monthTitle}</h2><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{calendarDays.map((day, index) => { if (day < 1) return <div className="calendar-day blank" key={index}/>; const key = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; const logged = issues.filter(i => dayKey(i.createdAt) === key); return <button key={key} className={`calendar-day ${key === selectedDay ? "chosen" : ""}`} onClick={() => setSelectedDay(key)}><span>{day}</span>{logged.length > 0 && <em>{logged.length} logged</em>}{logged.slice(0,2).map(i => <small key={i.id}>{i.title}</small>)}</button>; })}</div></div><aside className="day-summary"><p className="eyebrow">DAY SUMMARY</p><h2>{new Intl.DateTimeFormat("en", { weekday:"long", month:"long", day:"numeric" }).format(new Date(`${selectedDay}T12:00`))}</h2><p className="summary-count">{selectedIssues.length} issue{selectedIssues.length === 1 ? "" : "s"} logged</p><div className="day-issues">{selectedIssues.map(issue => <button key={issue.id} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.createdAt)}</small></button>)}{!selectedIssues.length && <p className="empty">No work logged for this day.</p>}</div></aside></section>}
-      {section === "metrics" && <section className="insights"><div className={`health-card ${health === "Looking healthy" ? "healthy" : "watch"}`}><div><p className="eyebrow">OVERALL SIGNAL</p><h2>{health}</h2><p>{health === "Looking healthy" ? "Follow-ups and completion timing are in a good place." : "A few signals need attention—start with overdue items and slow handoffs."}</p></div><strong>{health === "Looking healthy" ? "✦" : "!"}</strong></div><div className="metric-row insight-metrics"><article><span>Completion rate</span><strong>{issues.length ? Math.round((resolvedIssues.length / issues.length) * 100) : 0}%</strong><small>{resolvedIssues.length} of {issues.length} issues completed</small></article><article className={onTimeRate >= 80 ? "good" : "warm"}><span>On-time completion</span><strong>{dueResolved.length ? `${onTimeRate}%` : "—"}</strong><small>{dueResolved.length ? `${onTimeCount} completed by their ETA` : "Set ETAs to begin tracking"}</small></article><article><span>Avg. completion time</span><strong>{completionHours.length ? `${averageHours.toFixed(1)}h` : "—"}</strong><small>{completionHours.length ? "From logged to completed" : "Complete work to measure"}</small></article><article className={overdueCount ? "warm" : "good"}><span>Currently overdue</span><strong>{overdueCount}</strong><small>{overdueCount ? "Follow up to get back on track" : "No active work is overdue"}</small></article></div><div className="insight-detail"><article><p className="eyebrow">WHAT THIS MEANS</p><h2>Completion timing</h2><div className="progress-track"><span style={{ width: `${Math.max(8, onTimeRate)}%` }}/></div><p>{dueResolved.length ? `${onTimeRate}% of work with a logged ETA was completed on time. ${onTimeRate >= 80 ? "That’s a solid operating rhythm." : "Aim for 80% or higher by checking in before ETAs slip."}` : "Once you complete issues with expected completion times, you’ll see a timing trend here."}</p></article><article><p className="eyebrow">FOCUS NEXT</p><h2>Recommended actions</h2><ul><li>{overdueCount ? `Follow up on ${overdueCount} overdue issue${overdueCount === 1 ? "" : "s"}.` : "Keep your current follow-up rhythm."}</li><li>Capture an outcome whenever work is completed.</li><li>Set an expected update time for clearer delivery signals.</li></ul></article></div></section>}
-      {section === "diary" && <section className="diary-page"><div className="diary-grid"><form className="diary-composer" onSubmit={addDiaryEntry}><div><p className="eyebrow">TODAY&apos;S CHECK-IN</p><h2>What needs room today?</h2><p className="diary-copy">Write it exactly as it feels. This entry stays in this browser.</p></div><fieldset className="mood-picker"><legend>How are you feeling?</legend>{moods.map(mood => <button key={mood.value} className={diaryMood === mood.value ? "mood-selected" : ""} type="button" aria-pressed={diaryMood === mood.value} onClick={() => setDiaryMood(mood.value)}><span>{mood.symbol}</span><small>{mood.label}</small></button>)}</fieldset><label>Give this moment a name <small>optional</small><input value={diaryTitle} onChange={event => setDiaryTitle(event.target.value)} placeholder="A short title…"/></label><label>Let it out<textarea required value={diaryText} onChange={event => setDiaryText(event.target.value)} placeholder="What happened? What are you carrying? What do you wish you could say?"/></label><div className="diary-save"><span>Private on this device</span><button className="primary" type="submit">Save reflection</button></div></form><aside className="diary-companion"><span className="companion-mark">✦</span><p className="eyebrow">GENTLE NEXT STEP</p><h2>{diaryInsight ? "A thought for right now" : "Your private pause"}</h2><p>{diaryInsight || "After you save a reflection, Signal Petal will offer one small suggestion shaped by your mood and words."}</p><div className="diary-stats"><div><strong>{diaryEntries.length}</strong><span>Total entries</span></div><div><strong>{diaryEntries.filter(entry => Date.now() - new Date(entry.at).getTime() < 604800000).length}</strong><span>This week</span></div></div><small className="privacy-note">Suggestions are generated on this device. They are supportive prompts, not professional care.</small></aside></div><section className="diary-history"><div className="diary-history-heading"><div><p className="eyebrow">YOUR REFLECTIONS</p><h2>Recent entries</h2></div><span>{diaryEntries.length} saved</span></div><div className="diary-entry-list">{diaryEntries.map((entry, index) => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; const suggestion = entry.suggestion || diarySuggestion(entry.mood, entry.text, entry.title, diaryEntries.slice(index + 1), entry.at); return <article className="diary-entry" key={entry.id}><div className="diary-entry-top"><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><time>{dateLabel(entry.at)}</time></div><h3>{entry.title || "Untitled reflection"}</h3><p>{entry.text}</p><div className="entry-suggestion"><span>Try this</span><p>{suggestion}</p></div><button type="button" onClick={() => setDiaryEntries(items => items.filter(item => item.id !== entry.id))}>Delete</button></article>; })}{!diaryEntries.length && <div className="diary-empty"><span>✎</span><h3>Your diary is ready.</h3><p>Your first reflection will appear here with its mood and gentle next step.</p></div>}</div></section></section>}
+      {section === "calendar" && <section className="calendar-layout"><div className="calendar-panel"><div className="calendar-toolbar"><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{monthTitle}</h2><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{calendarDays.map((day, index) => { if (day < 1) return <div className="calendar-day blank" key={index}/>; const key = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; const logged = issues.filter(i => dayKey(i.createdAt) === key); const reflections = diaryLog.filter(event => dayKey(event.at) === key); return <button key={key} className={`calendar-day ${key === selectedDay ? "chosen" : ""}`} onClick={() => setSelectedDay(key)}><span>{day}</span>{(logged.length > 0 || reflections.length > 0) && <div className="day-counts">{logged.length > 0 && <em>{logged.length} logged</em>}{reflections.length > 0 && <em className="diary-count">✎ {reflections.length}</em>}</div>}{logged.slice(0, reflections.length ? 1 : 2).map(i => <small key={i.id}>{i.title}</small>)}{reflections.slice(0, 1).map(event => <small className="diary-line" key={event.id}>{moodName(event.mood)} · {event.title || "Untitled reflection"}</small>)}</button>; })}</div></div><aside className="day-summary"><p className="eyebrow">DAY SUMMARY</p><h2>{new Intl.DateTimeFormat("en", { weekday:"long", month:"long", day:"numeric" }).format(new Date(`${selectedDay}T12:00`))}</h2><p className="summary-count">{selectedIssues.length} issue{selectedIssues.length === 1 ? "" : "s"} logged{selectedDiary.length ? ` · ${selectedDiary.length} diary ${selectedDiary.length === 1 ? "entry" : "entries"}` : ""}</p>{selectedDiary.length > 0 && <div className="day-diary"><p className="eyebrow">DIARY</p>{selectedDiary.map(event => <button key={event.id} className={`day-diary-entry action-${event.action}`} onClick={() => setSection("diary")}><span className={`mood-tag mood-${event.mood}`}>{moods.find(item => item.value === event.mood)?.symbol} {moodName(event.mood)}</span><strong>{event.title || "Untitled reflection"}</strong><small>{diaryEventLabel(event.action)} · {dateLabel(event.at)}{event.detail ? ` · ${event.detail}` : ""}</small></button>)}</div>}<div className="day-issues">{selectedIssues.map(issue => <button key={issue.id} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.createdAt)}</small></button>)}{!selectedIssues.length && !selectedDiary.length && <p className="empty">Nothing logged for this day.</p>}</div></aside></section>}
+      {section === "metrics" && <section className="insights">
+        <div className="insights-toolbar"><div><p className="eyebrow">WORK SIGNALS</p><h2>{taskInsights.rangeLabel}</h2><p>Choose a period, then click any signal to see the work behind it.</p></div><div className="insight-period" role="group" aria-label="Insight period">{(["7d", "30d", "90d", "all"] as InsightRange[]).map(range => <button key={range} type="button" className={insightRange === range ? "selected" : ""} aria-pressed={insightRange === range} onClick={() => { setInsightRange(range); setInsightFocus(""); }}>{range === "all" ? "All time" : range.toUpperCase()}</button>)}</div></div>
+
+        <div className={`health-card ${taskInsights.healthScore >= 85 ? "healthy" : "watch"}`}><div><p className="eyebrow">OVERALL SIGNAL</p><h2>{taskInsights.healthLabel}</h2><p>{taskInsights.narrative}</p></div><div className="health-score"><strong>{taskInsights.healthScore}</strong><span>out of 100</span></div></div>
+
+        <div className="insight-kpis">
+          <button type="button" onClick={() => setInsightFocus("created")} className={insightFocus === "created" ? "selected" : ""}><span>Work logged</span><strong>{taskInsights.created.length}</strong><small>{taskInsights.rangeDays === null ? "Across all recorded work" : `${taskInsights.created.length - taskInsights.previousCreated.length >= 0 ? "+" : ""}${taskInsights.created.length - taskInsights.previousCreated.length} vs previous period`}</small></button>
+          <button type="button" onClick={() => setInsightFocus("completed")} className={insightFocus === "completed" ? "selected" : ""}><span>Completed</span><strong>{taskInsights.completed.length}</strong><small>{taskInsights.rangeDays === null ? "With a recorded completion time" : `${taskInsights.completed.length - taskInsights.previousCompleted.length >= 0 ? "+" : ""}${taskInsights.completed.length - taskInsights.previousCompleted.length} vs previous period`}</small></button>
+          <button type="button" onClick={() => setInsightFocus("completed")} className={insightFocus === "completed" ? "selected" : ""}><span>Median completion</span><strong>{taskInsights.completionHours.length ? durationLabel(taskInsights.medianHours) : "—"}</strong><small>{taskInsights.completionHours.length ? `75% finish within ${durationLabel(taskInsights.p75Hours)}` : "New completions will build this signal"}</small></button>
+          <button type="button" onClick={() => setInsightFocus("overdue")} className={`${taskInsights.overdue.length ? "warm" : "good"} ${insightFocus === "overdue" ? "selected" : ""}`}><span>Overdue now</span><strong>{taskInsights.overdue.length}</strong><small>{taskInsights.overdue.length ? `${taskInsights.overdueEightPlus.length} overdue by more than a week` : "Every active item is on track"}</small></button>
+        </div>
+
+        {insightFocus && <section className="insight-drilldown" aria-live="polite"><div className="insight-drilldown-head"><div><p className="eyebrow">DRILL-DOWN</p><h3>{insightFocusLabel}</h3></div><button type="button" onClick={() => setInsightFocus("")}>Close</button></div><div className="insight-task-list">{insightFocusItems.map(issue => <button key={issue.id} type="button" onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><strong>{issue.title}</strong><small>{issue.owner || "Unassigned"} · {issue.expected ? dateLabel(issue.expected) : "No ETA"}{insightFocus === "quality" ? ` · Missing ${taskInsights.qualityProblems.get(issue.id)?.join(", ")}` : ""}</small></button>)}{!insightFocusItems.length && <p className="empty">There is no matching work in this period.</p>}</div></section>}
+
+        <div className="insight-dashboard-grid">
+          <article className="insight-panel flow-panel"><div className="insight-panel-head"><div><p className="eyebrow">FLOW</p><h3>Logged versus completed</h3></div><div className="flow-legend"><span><i className="created"/>Logged</span><span><i className="completed"/>Completed</span></div></div><div className="flow-chart">{taskInsights.flow.map((bucket, index) => <div className="flow-bucket" key={`${bucket.label}-${index}`}><div className="flow-bars"><button type="button" className="created" style={{ height: `${bucket.created ? Math.max(8, Math.round((bucket.created / taskInsights.flowMax) * 100)) : 2}%` }} aria-label={`${bucket.created} logged from ${bucket.label}`} title={`${bucket.created} logged`} onClick={() => setInsightFocus("created")}/><button type="button" className="completed" style={{ height: `${bucket.completed ? Math.max(8, Math.round((bucket.completed / taskInsights.flowMax) * 100)) : 2}%` }} aria-label={`${bucket.completed} completed from ${bucket.label}`} title={`${bucket.completed} completed`} onClick={() => setInsightFocus("completed")}/></div><small>{bucket.label}</small></div>)}</div><p className="insight-note">{taskInsights.created.length > taskInsights.completed.length ? "More work entered than left during this period, so the backlog is growing." : taskInsights.created.length < taskInsights.completed.length ? "Completions outpaced new work—the queue is shrinking." : "New work and completions are balanced."}</p></article>
+
+          <article className="insight-panel"><p className="eyebrow">RELIABILITY</p><h3>Signal breakdown</h3><div className="signal-breakdown">{[{ key: "overdue", label: "Delivery", value: taskInsights.deliveryScore }, { key: "stale", label: "Freshness", value: taskInsights.freshnessScore }, { key: "quality", label: "Data quality", value: taskInsights.documentationScore }, { key: "completed", label: "On-time completion", value: taskInsights.reliabilityScore }].map(signal => <button type="button" key={signal.label} onClick={() => setInsightFocus(signal.key)}><span>{signal.label}</span><span className="signal-track"><i style={{ width: `${signal.value}%` }}/></span><strong>{signal.value}%</strong></button>)}</div><p className="insight-note">{taskInsights.dueCompleted.length ? `${taskInsights.onTimeCount} of ${taskInsights.dueCompleted.length} measured completions met their ETA.` : "On-time reporting begins once a task has both an ETA and a recorded completion time."}</p></article>
+        </div>
+
+        <div className="insight-dashboard-grid">
+          <article className="insight-panel"><p className="eyebrow">BOTTLENECKS</p><h3>Open work by status</h3><ul className="insight-ranked-list">{taskInsights.statusGroups.slice(0, 6).map(group => <li key={group.status}><button type="button" onClick={() => setInsightFocus(`status:${group.status}`)}><span><i style={{ background: statusColors[group.status] || "#7a5aa6" }}/><strong>{group.status}</strong><small>median {group.medianAge < 1 ? "under a day" : `${Math.round(group.medianAge)}d`} in this stage</small></span><em>{group.count}</em></button></li>)}{!taskInsights.statusGroups.length && <li className="empty">No active work.</li>}</ul></article>
+
+          <article className="insight-panel"><p className="eyebrow">AGING &amp; RISK</p><h3>Where time is accumulating</h3><ul className="insight-ranked-list aging-list">{[{ key: "age:soon", label: "Due within 24 hours", items: taskInsights.dueSoon }, { key: "age:1-3", label: "1–3 days overdue", items: taskInsights.overdueOneToThree }, { key: "age:4-7", label: "4–7 days overdue", items: taskInsights.overdueFourToSeven }, { key: "age:8+", label: "8+ days overdue", items: taskInsights.overdueEightPlus }, { key: "age:no-eta", label: "No ETA", items: taskInsights.noEta }].map(group => <li key={group.key}><button type="button" onClick={() => setInsightFocus(group.key)}><span><strong>{group.label}</strong><small>{group.items.length ? "Click to review" : "Clear"}</small></span><em>{group.items.length}</em></button></li>)}</ul></article>
+        </div>
+
+        <div className="insight-dashboard-grid">
+          <article className="insight-panel"><p className="eyebrow">OWNERS &amp; HANDOFFS</p><h3>Active workload</h3><ul className="insight-ranked-list owner-risk-list">{taskInsights.ownerGroups.slice(0, 6).map(group => <li key={group.owner}><button type="button" onClick={() => setInsightFocus(`owner:${group.owner}`)}><span><strong>{group.owner}</strong><small>{group.overdue} overdue · {group.stale} stale · {group.followUps} follow-up link{group.followUps === 1 ? "" : "s"}</small></span><em>{group.items.length}</em></button></li>)}{!taskInsights.ownerGroups.length && <li className="empty">No active ownership load.</li>}</ul></article>
+
+          <article className="insight-panel data-quality-card"><div className="insight-panel-head"><div><p className="eyebrow">DATA QUALITY</p><h3>Can the numbers be trusted?</h3></div><button className="quality-score" type="button" onClick={() => setInsightFocus("quality")}>{taskInsights.documentationScore}%</button></div><div className="quality-grid"><button type="button" onClick={() => setInsightFocus("quality")}><strong>{taskInsights.qualityCounts.eta}</strong><span>Missing ETA</span></button><button type="button" onClick={() => setInsightFocus("quality")}><strong>{taskInsights.qualityCounts.action}</strong><span>Missing action</span></button><button type="button" onClick={() => setInsightFocus("quality")}><strong>{taskInsights.qualityCounts.outcome}</strong><span>Missing outcome</span></button><button type="button" onClick={() => setInsightFocus("quality")}><strong>{taskInsights.qualityCounts.completion}</strong><span>Legacy completion time</span></button></div><p className="insight-note">Completion timing now uses recorded completion timestamps only; older inferred dates no longer distort the result.</p></article>
+        </div>
+
+        <article className="insight-summary"><div><p className="eyebrow">SMART WEEKLY REVIEW</p><h3>What changed and what to do next</h3><p>{taskInsights.narrative}</p></div><ul>{taskInsights.nextActions.map(action => <li key={action}>{action}</li>)}</ul></article>
+
+        <div className="diary-insights">
+          <div className="diary-insights-head"><div><p className="eyebrow">PRIVATE PERSONAL RHYTHM</p><h2>The other half of the story ✦</h2><p>Optional patterns from moods and diary activity, calculated only on this device.</p></div><div className="insight-head-actions"><button className="secondary" type="button" onClick={() => setShowPersonalInsights(value => !value)}>{showPersonalInsights ? "Hide personal insights" : "Show personal insights"}</button>{diaryInsights && showPersonalInsights && <button className="secondary" type="button" onClick={() => setSection("diary")}>Open the diary</button>}</div></div>
+          {!showPersonalInsights
+            ? <div className="diary-insights-empty"><span>◌</span><h3>Personal insights are hidden.</h3><p>Your diary remains unchanged. Show this section whenever you want mood and workload patterns included.</p></div>
+            : !diaryInsights
+            ? <div className="diary-insights-empty"><span>✎</span><h3>Nothing to read yet.</h3><p>Write a few reflections and this fills up with your streaks, your moods, and the words you keep reaching for.</p></div>
+            : <>
+              <div className="metric-row insight-metrics">
+                <article><span>Reflections</span><strong>{diaryInsights.entries.length}</strong><small>across {diaryInsights.daysWritten} day{diaryInsights.daysWritten === 1 ? "" : "s"}</small></article>
+                <article className={diaryInsights.currentStreak > 1 ? "good" : ""}><span>Writing streak</span><strong>{diaryInsights.currentStreak || "—"}</strong><small>{diaryInsights.currentStreak > 1 ? `${diaryInsights.currentStreak} days running · best ${diaryInsights.longestStreak}` : `Longest run so far: ${diaryInsights.longestStreak} day${diaryInsights.longestStreak === 1 ? "" : "s"}`}</small></article>
+                <article><span>Words written</span><strong>{diaryInsights.totalWords.toLocaleString()}</strong><small>{diaryInsights.averageWords} a page · longest {diaryInsights.longestWords}</small></article>
+                <article><span>Pages revisited</span><strong>{diaryInsights.revisited}</strong><small>{diaryInsights.revisited ? "you went back and reworked them" : "no page has needed a second pass"}</small></article>
+              </div>
+
+              <article className="insight-panel diary-pulse-card">
+                <div className="insight-panel-head"><div><p className="eyebrow">YOUR RECENT PULSE</p><h3>{diaryInsights.pulse.direction}</h3></div><span className="confidence-chip">{diaryInsights.pulse.confidence}</span></div>
+                <div className="pulse-grid">
+                  <div><span>Pages this week</span><strong>{diaryInsights.pulse.currentCount}</strong><small>{diaryInsights.pulse.previousCount ? `${diaryInsights.pulse.currentCount - diaryInsights.pulse.previousCount >= 0 ? "+" : ""}${diaryInsights.pulse.currentCount - diaryInsights.pulse.previousCount} versus the prior week` : "The prior week has no pages yet"}</small></div>
+                  <div><span>Mood movement</span><strong>{diaryInsights.pulse.delta === null ? "—" : `${diaryInsights.pulse.delta > 0 ? "+" : ""}${diaryInsights.pulse.delta.toFixed(1)}`}</strong><small>{diaryInsights.pulse.delta === null ? "Two weeks create a comparison" : diaryInsights.pulse.delta > .35 ? "lighter than the previous week" : diaryInsights.pulse.delta < -.35 ? "heavier than the previous week" : "close to your previous week"}</small></div>
+                  <div><span>Heavy entries</span><strong>{diaryInsights.pulse.heavy === null ? "—" : `${diaryInsights.pulse.heavy}%`}</strong><small>{diaryInsights.pulse.previousHeavy === null ? "Still building a baseline" : `${diaryInsights.pulse.previousHeavy}% in the prior week`}</small></div>
+                </div>
+                <p className="insight-note">This compares the last seven days with the seven before them. It describes movement in your entries; it does not diagnose or claim what caused it.</p>
+              </article>
+
+              <article className="insight-panel mood-ribbon-card">
+                <div className="insight-panel-head"><div><p className="eyebrow">MOOD RIBBON</p><h3>Your last {diaryInsights.ribbon.length} page{diaryInsights.ribbon.length === 1 ? "" : "s"}, oldest first</h3></div><span className={`mood-tag mood-${diaryInsights.topMood.value}`}>{diaryInsights.topMood.symbol} mostly {diaryInsights.topMood.label.toLowerCase()}</span></div>
+                <div className="mood-ribbon">{diaryInsights.ribbon.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}${entry.title ? ` · ${entry.title}` : ""}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setSection("diary"); setOpenDiaryId(entry.id); }}/>)}</div>
+                <div className="mood-mix">{diaryInsights.moodCounts.filter(mood => mood.count).map(mood => <span key={mood.value} className={`mood-tag mood-${mood.value}`}>{mood.symbol} {mood.label} · {Math.round((mood.count / diaryInsights.entries.length) * 100)}%</span>)}</div>
+              </article>
+
+              <div className="insight-detail diary-influence-grid">
+                <article className="insight-panel influences-panel">
+                  <p className="eyebrow">WHAT INFLUENCED THE PAGE</p><h3>Supports and drains</h3>
+                  {diaryInsights.influences.length
+                    ? <div className="influence-list">{diaryInsights.influences.map(influence => <button type="button" className={`influence-card tone-${influence.tone}`} key={influence.id} onClick={() => { setSection("diary"); setOpenDiaryId(influence.evidence.id); }}><span><strong>{influence.label}</strong><em>{influence.tone === "support" ? "Associated with lighter entries" : influence.tone === "drain" ? "Associated with heavier entries" : "Mixed across your entries"}</em></span><q>{influence.excerpt}</q><small>{influence.count} page{influence.count === 1 ? "" : "s"} · {influence.confidence} · Open evidence →</small></button>)}</div>
+                    : <p className="insight-note">No repeated influence is clear yet. A few more specific entries will make this evidence useful.</p>}
+                </article>
+
+                <article className="insight-panel weekly-reflection-card">
+                  <p className="eyebrow">PRIVATE WEEKLY REFLECTION</p><h3>Your last seven days</h3>
+                  {diaryInsights.weekly.count
+                    ? <div className="weekly-reflection-list">
+                        <button type="button" disabled={!diaryInsights.weekly.lifted} onClick={() => diaryInsights.weekly.lifted && (setSection("diary"), setOpenDiaryId(diaryInsights.weekly.lifted.entry.id))}><span>What lifted you</span><strong>{diaryInsights.weekly.lifted?.excerpt || "No lighter entry recorded yet."}</strong></button>
+                        <button type="button" disabled={!diaryInsights.weekly.drained} onClick={() => diaryInsights.weekly.drained && (setSection("diary"), setOpenDiaryId(diaryInsights.weekly.drained.entry.id))}><span>What felt heavy</span><strong>{diaryInsights.weekly.drained?.excerpt || "No heavy entry recorded this week."}</strong></button>
+                        <div><span>What repeated</span><strong>{diaryInsights.weekly.repeating ? `${diaryInsights.weekly.repeating.label} · ${diaryInsights.weekly.repeating.count} page${diaryInsights.weekly.repeating.count === 1 ? "" : "s"}` : "No theme repeated yet."}</strong></div>
+                        <div className="weekly-experiment"><span>One experiment for next week</span><strong>{diaryInsights.weekly.experiment}</strong></div>
+                      </div>
+                    : <p className="insight-note">Write a reflection this week and the review will build from it.</p>}
+                </article>
+              </div>
+
+              <div className="insight-detail">
+                <article className="insight-panel">
+                  <p className="eyebrow">WHAT KEEPS COMING UP</p><h3>Recurring threads</h3>
+                  {diaryInsights.themes.length
+                    ? <ul className="theme-bars theme-trends">{diaryInsights.themes.map(theme => <li key={theme.label}><span className="theme-name">{theme.label}<small>{theme.trend} · {theme.confidence}</small></span><span className="theme-track"><span style={{ width: `${Math.max(10, Math.round((theme.count / diaryInsights.entries.length) * 100))}%` }}/></span><em>{theme.count}</em></li>)}</ul>
+                    : <p>No thread has repeated yet — write a few more and the pattern will show.</p>}
+                  <p className="insight-note">{(() => {
+                    if (!diaryInsights.themes.length) return "Threads are counted across every page, so they sharpen as you write.";
+                    const lead = diaryInsights.themes[0];
+                    const share = Math.round((lead.count / diaryInsights.entries.length) * 100);
+                    const name = `${lead.label.charAt(0).toUpperCase()}${lead.label.slice(1)}`;
+                    return share >= 30
+                      ? `${name} is the strongest thread — ${lead.count} of your ${diaryInsights.entries.length} pages. At that rate it has stopped being a bad week and started being a condition worth changing on purpose.`
+                      : `${name} leads so far, in ${lead.count} of ${diaryInsights.entries.length} pages. Early days — but that is the thread to watch.`;
+                  })()}</p>
+                </article>
+
+                <article className="insight-panel">
+                  <p className="eyebrow">WHEN YOU WRITE</p><h3>{diaryInsights.favouriteTime.label === "Late night" ? "A night writer ☾" : diaryInsights.favouriteTime.label === "Early" ? "An early writer ☀" : `Mostly ${diaryInsights.favouriteTime.label.toLowerCase()}`}</h3>
+                  <ul className="clock-bars">{diaryInsights.clock.map(part => <li key={part.id} className={part.id === diaryInsights.favouriteTime.id ? "is-top" : ""}><span className="theme-name">{part.label}<small>{part.note}</small></span><span className="theme-track"><span style={{ width: `${part.count ? Math.max(8, Math.round((part.count / diaryInsights.entries.length) * 100)) : 0}%` }}/></span><em>{part.count}</em></li>)}</ul>
+                  {diaryInsights.brightestDay && <p className="insight-note">{diaryInsights.brightestDay.name === diaryInsights.heaviestDay?.name ? `Every page so far lands on a ${diaryInsights.brightestDay.name}.` : `${diaryInsights.brightestDay.name}s read lightest; ${diaryInsights.heaviestDay?.name}s carry the most weight.`}</p>}
+                </article>
+              </div>
+
+              <div className="insight-detail">
+                <article className="insight-panel">
+                  <p className="eyebrow">YOUR WORDS</p><h3>What you keep reaching for</h3>
+                  {diaryInsights.words.length
+                    ? <div className="word-cloud">{diaryInsights.words.map(([word, count], index) => <span key={word} className="word-chip" style={{ fontSize: `${Math.round(22 - index * 1.6)}px` }} title={`${count} times`}>{word}</span>)}</div>
+                    : <p>Once a word shows up on more than one page it will appear here.</p>}
+                </article>
+
+                <article className="insight-panel">
+                  <p className="eyebrow">DIARY &amp; THE QUEUE</p><h3>{diaryInsights.crossover ? "Higher-load days versus lighter ones" : diaryInsights.lift ? "Your biggest lift" : "Still gathering"}</h3>
+                  {diaryInsights.crossover
+                    ? <><div className="crossover"><div><strong>{diaryInsights.crossover.busy}%</strong><span>heavy with more open, overdue, or follow-up work</span><small>{diaryInsights.crossover.busyCount} pages</small></div><div><strong>{diaryInsights.crossover.quiet}%</strong><span>heavy with a lighter recorded queue</span><small>{diaryInsights.crossover.quietCount} pages</small></div></div><p className="insight-note">{diaryInsights.crossover.busy - diaryInsights.crossover.quiet >= 15 ? "Heavier entries are associated with a fuller recorded queue. Treat that as a workload signal to investigate, not proof that work caused the mood." : diaryInsights.crossover.quiet - diaryInsights.crossover.busy >= 15 ? "The lighter-queue days read heavier, so the recorded workload alone does not explain the shift." : "Your entries hold fairly steady across the two workload groups."}</p></>
+                    : diaryInsights.lift
+                      ? <p className="insight-note">Between {dateLabel(diaryInsights.lift.from.at)} and {dateLabel(diaryInsights.lift.to.at)} you moved from {moodName(diaryInsights.lift.from.mood).toLowerCase()} to {moodName(diaryInsights.lift.to.mood).toLowerCase()}{diaryInsights.lift.to.title ? ` on “${diaryInsights.lift.to.title}”` : ""}. Worth knowing what changed — that is the part you can repeat.</p>
+                      : <p className="insight-note">Keep writing. Once both workload groups have at least three pages, this compares mood with the open, overdue, and follow-up load that was recorded at the time.</p>}
+                </article>
+              </div>
+
+              <article className="insight-panel suggestion-learning-card">
+                <div><p className="eyebrow">SUGGESTION LEARNING</p><h3>Teach Signal Petal what helps</h3><p>Open a diary page and mark whether you tried its next step or found it useful. Your feedback stays on this device and makes the usefulness record personal to you.</p></div>
+                <div className="suggestion-learning-stats"><div><strong>{diaryInsights.feedback.tried}</strong><span>tried</span></div><div><strong>{diaryInsights.feedback.rated}</strong><span>rated</span></div><div><strong>{diaryInsights.feedback.rated ? `${Math.round((diaryInsights.feedback.helpful / diaryInsights.feedback.rated) * 100)}%` : "—"}</strong><span>helpful</span></div></div>
+              </article>
+            </>}
+        </div></section>}
+      {section === "diary" && <section className="diary-section" style={diarySkin}><div className="diary-grid"><form className={`diary-composer paper-${diaryPaper}`} onSubmit={addDiaryEntry}><div><p className="eyebrow">TODAY&apos;S CHECK-IN</p><h2>What needs room today?</h2><p className="diary-copy">Write it exactly as it feels. This entry stays in this browser.</p></div><fieldset className="mood-picker"><legend>How are you feeling?</legend>{moods.map(mood => <button key={mood.value} className={diaryMood === mood.value ? "mood-selected" : ""} type="button" aria-pressed={diaryMood === mood.value} onClick={() => setDiaryMood(mood.value)}><span>{mood.symbol}</span><small>{mood.label}</small></button>)}</fieldset><label>Give this moment a name <small>optional</small><input value={diaryTitle} onChange={event => setDiaryTitle(event.target.value)} placeholder="A short title…"/></label><label>Let it out<textarea className="diary-ruled" required value={diaryText} onChange={event => setDiaryText(event.target.value)} placeholder="What happened? What are you carrying? What do you wish you could say?"/></label><div className="diary-save"><span>Private on this device</span><button className="primary" type="submit">Save reflection</button></div></form><aside className="diary-companion"><span className="companion-mark">✦</span><p className="eyebrow">GENTLE NEXT STEP</p><h2>{diaryInsight ? "A thought for right now" : "Your private pause"}</h2><p>{diaryInsight || "After you save a reflection, Signal Petal will offer one small suggestion shaped by your mood and words."}</p><div className="diary-stats"><div><strong>{diaryEntries.length}</strong><span>Total entries</span></div><div><strong>{diaryEntries.filter(entry => Date.now() - new Date(entry.at).getTime() < 604800000).length}</strong><span>This week</span></div></div><small className="privacy-note">Suggestions are generated on this device. They are supportive prompts, not professional care.</small></aside></div><section className="diary-history"><div className="diary-history-heading"><div><p className="eyebrow">YOUR REFLECTIONS</p><h2>Recent entries</h2></div><span>{diaryEntries.length} saved</span></div><div className="diary-entry-list">{diaryEntries.map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <article className={`diary-entry diary-page paper-${diaryPaper}`} key={entry.id}><button className="diary-page-open" type="button" onClick={() => { setOpenDiaryId(entry.id); setEditingDiaryId(""); }}><span className="diary-entry-top"><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><time>{dateLabel(entry.at)}{entry.updatedAt ? ` · edited ${dateLabel(entry.updatedAt)}` : ""}</time></span><span className="diary-page-title">{entry.title || "Untitled reflection"}</span><span className="diary-ruled diary-page-body">{entry.text}</span><span className="diary-page-more">Open page →</span></button></article>; })}{!diaryEntries.length && <div className="diary-empty"><span>✎</span><h3>Your diary is ready.</h3><p>Your first reflection will appear here with its mood and gentle next step.</p></div>}</div></section></section>}
       {section === "settings" && <section className="settings-page" aria-labelledby="settings-page-title">
         <div className="settings-grid">
           <article className="settings-card">
             <p className="eyebrow">APPEARANCE</p><h2 id="settings-page-title">Theme &amp; display</h2>
             <label className="settings-field">Theme<select value={theme} onChange={e => setTheme(e.target.value)}>{themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <button className="settings-toggle" type="button" role="switch" aria-checked={darkMode} onClick={() => setDarkMode(value => !value)}><span><strong>Dark mode</strong><small>{darkMode ? "On" : "Off"}</small></span><span className={`switch-track ${darkMode ? "is-on" : ""}`} aria-hidden="true"/></button>
+          </article>
+          <article className="settings-card">
+            <p className="eyebrow">DIARY</p><h2>Paper &amp; handwriting</h2>
+            <p className="settings-copy">Choose the face you write in and the colour of the page. Both apply everywhere in the diary.</p>
+            <label className="settings-field">Writing font<select value={diaryFont} onChange={event => setDiaryFont(event.target.value)}>{diaryFonts.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <div className="paper-picker"><span>Page colour</span><div className="paper-swatches">{diaryPapers.map(([value, label]) => <button key={value} type="button" className={`paper-swatch paper-${value} ${diaryPaper === value ? "is-chosen" : ""}`} aria-pressed={diaryPaper === value} aria-label={label} title={label} onClick={() => setDiaryPaper(value)}/>)}</div></div>
+            <div className={`paper-preview diary-ruled paper-${diaryPaper}`} style={diarySkin} aria-hidden="true">Today felt long, but I got through it. Tomorrow I start with the one thing I keep pushing back.</div>
           </article>
           <article className="settings-card">
             <p className="eyebrow">NOTIFICATIONS</p><h2>Reminders</h2>
@@ -692,6 +1210,22 @@ export default function Home() {
       </section>}
     </section>
     {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => setFollowUpInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div><div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={() => setShowDetail(false)}>Save changes</button></div></section></div>}
+    {openEntry && (() => {
+      const mood = moods.find(item => item.value === openEntry.mood) || moods[2];
+      const drafting = editingDiaryId === openEntry.id;
+      const suggestion = openEntry.suggestion || diarySuggestion(openEntry.mood, openEntry.text, openEntry.title, diaryEntries.slice(openEntryIndex + 1), openEntry.at);
+      const trail = diaryLog.filter(event => event.entryId === openEntry.id);
+      const close = () => { setOpenDiaryId(""); setEditingDiaryId(""); };
+      return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }} style={diarySkin}>
+        <section className={`diary-open paper-${diaryPaper}`} role="dialog" aria-modal="true" aria-labelledby="diary-open-title">
+          <button className="close" type="button" aria-label="Close this page" onClick={close}>×</button>
+          <div className="diary-open-head"><span className={`mood-tag mood-${drafting ? editDraft.mood : openEntry.mood}`}>{(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).symbol} {(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).label}</span><time>{dateLabel(openEntry.at)}{openEntry.updatedAt ? ` · edited ${dateLabel(openEntry.updatedAt)}` : ""}</time></div>
+          {drafting
+            ? <form className="diary-entry-edit" onSubmit={event => saveDiaryEdit(event, openEntry, openEntryIndex)}><fieldset className="mood-picker mood-picker-compact"><legend>Mood</legend>{moods.map(option => <button key={option.value} className={editDraft.mood === option.value ? "mood-selected" : ""} type="button" aria-pressed={editDraft.mood === option.value} onClick={() => setEditDraft(draft => ({ ...draft, mood: option.value }))}><span>{option.symbol}</span><small>{option.label}</small></button>)}</fieldset><label>Title <small>optional</small><input value={editDraft.title} onChange={event => setEditDraft(draft => ({ ...draft, title: event.target.value }))} placeholder="A short title…"/></label><label>Reflection<textarea className="diary-ruled" required value={editDraft.text} onChange={event => setEditDraft(draft => ({ ...draft, text: event.target.value }))}/></label><div className="diary-entry-actions"><button className="primary" type="submit">Save changes</button><button className="secondary" type="button" onClick={cancelDiaryEdit}>Cancel</button></div></form>
+            : <><h2 id="diary-open-title" className="diary-open-title">{openEntry.title || "Untitled reflection"}</h2><div className="diary-ruled diary-open-body">{openEntry.text}</div><div className="entry-suggestion"><span>Try this</span><p>{suggestion}</p><div className="suggestion-feedback" role="group" aria-label="Suggestion feedback"><button type="button" className={openEntry.suggestionTried ? "selected" : ""} aria-pressed={Boolean(openEntry.suggestionTried)} onClick={() => updateSuggestionFeedback(openEntry.id, { suggestionTried: !openEntry.suggestionTried })}>✓ I tried this</button><button type="button" className={openEntry.suggestionHelpful === true ? "selected" : ""} aria-pressed={openEntry.suggestionHelpful === true} onClick={() => updateSuggestionFeedback(openEntry.id, { suggestionHelpful: openEntry.suggestionHelpful === true ? undefined : true })}>Helpful</button><button type="button" className={openEntry.suggestionHelpful === false ? "selected not-helpful" : ""} aria-pressed={openEntry.suggestionHelpful === false} onClick={() => updateSuggestionFeedback(openEntry.id, { suggestionHelpful: openEntry.suggestionHelpful === false ? undefined : false })}>Not for me</button></div><small className="feedback-note">Private feedback—used only in your on-device insights.</small></div>{trail.length > 0 && <ul className="entry-trail">{trail.map(event => <li key={event.id}><strong>{diaryEventLabel(event.action)}</strong> {dateLabel(event.at)} <span>{event.detail}</span></li>)}</ul>}<div className="diary-entry-actions"><button type="button" onClick={() => startDiaryEdit(openEntry)}>Edit</button><button type="button" className="entry-delete" onClick={() => deleteDiaryEntry(openEntry)}>Delete</button></div></>}
+        </section>
+      </div>;
+    })()}
     {showCreate && <div className="modal-backdrop" role="presentation"><form className="modal" onSubmit={addIssue}><button className="close" type="button" onClick={() => setShowCreate(false)}>×</button><p className="eyebrow">NEW WORK ITEM</p><h2>Log/Track</h2><label>Title<input required name="title" placeholder="What needs attention?"/></label><label>Details<textarea name="details" placeholder="Context, impact, links, and useful clues…"/></label><div className="form-grid"><label>Primary owner<input name="owner" placeholder={personalOwner}/></label><label>Expected update<input name="expected" type="datetime-local"/></label></div><div className="people-field"><span>Follow-up people</span>{newFollowUps.length > 0 && <div className="people-chips">{newFollowUps.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => setNewFollowUps(items => items.filter(name => name !== person))}>×</button></span>)}</div>}<div className="people-add"><input value={newFollowUpInput} onChange={e => setNewFollowUpInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addNewFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addNewFollowUps}>+ Add people</button></div><small>Optional. These people will only be tracked inside this issue.</small></div><label>Current action<textarea name="action" placeholder="What are they—or you—doing next?"/></label><button className="primary create" type="submit">Create issue</button></form></div>}
     {showDeleteConfirm && active && <div className="modal-backdrop confirm-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="confirm-icon">!</span><h2 id="delete-title">Delete this issue?</h2><p id="delete-description">“{active.title}” and its update history will be permanently removed.</p><div className="confirm-actions"><button className="secondary" type="button" autoFocus onClick={() => setShowDeleteConfirm(false)}>Keep issue</button><button className="danger" type="button" onClick={deleteIssue}>Delete issue</button></div></section></div>}
     {hydrated && !profile && <div className="profile-backdrop"><form className="profile-card" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="setup-title"><span className="profile-mark">✦</span><p className="eyebrow">WELCOME TO SIGNAL PETAL</p><h1 id="setup-title">Let&apos;s make this yours.</h1><p>Tell us a little about yourself and we&apos;ll personalize your workspace. This stays only in this browser.</p><label>Your name<input required name="name" autoFocus placeholder="e.g. Aesi"/></label><label>Your role<input required name="role" placeholder="e.g. Site Reliability Engineer"/></label><button className="primary" type="submit">Create my workspace</button></form></div>}
