@@ -205,6 +205,7 @@ main.dark-mode .confirm-icon{color:#ffb4c4;background:#4a2934}
 .metric-card:hover{border-color:var(--accent);transform:translateY(-1px)}.metric-card:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 32%,transparent);outline-offset:2px}.metric-card.metric-selected{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
 .metric-card.warm{background:#fff8ed;border-color:#f6e4c4}.metric-card.good{background:#f1faf6;border-color:#d9ede2}.view-mine .metric-card.personal,.view-attention .metric-card.urgent{color:#fff;border-color:transparent;background:linear-gradient(135deg,var(--view-accent),color-mix(in srgb,var(--view-accent) 72%,#332342))}.view-mine .metric-card.personal span,.view-mine .metric-card.personal small,.view-attention .metric-card.urgent span,.view-attention .metric-card.urgent small{color:#fff;opacity:.9}main.dark-mode .metric-card{background:var(--panel);border-color:var(--border)}main.dark-mode .metric-card.warm{background:#332b27;border-color:#5a463e}main.dark-mode .metric-card.good{background:#24322c;border-color:#3d5a4b}main.dark-mode .metric-card.metric-selected{border-color:var(--accent)}
 .dashboard-view-metrics{display:none}.dashboard-switcher .metric-card{min-width:0}.dashboard-switcher .metric-card.metric-selected{transform:translateY(-2px)}
+@media(min-width:951px){.dashboard-switcher{grid-template-columns:repeat(5,minmax(0,1fr))}}
 .issue-card-people{display:block;margin-top:8px;color:var(--accent-deep);font-size:11px;font-weight:700;line-height:1.35}.issue-meta em{color:var(--accent-deep);font-size:10px;font-style:normal;font-weight:750}
 .people-field{display:grid;gap:8px}.people-field>span{color:var(--subtext);font-size:13px;font-weight:750}.people-field>small{color:var(--subtext);font-size:11px;line-height:1.4}.people-chips{display:flex;flex-wrap:wrap;gap:7px}.person-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 8px 6px 10px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--border));border-radius:999px;background:var(--accent-soft);color:var(--accent-deep);font-size:12px;font-weight:750}.person-chip button{display:grid;place-items:center;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:color-mix(in srgb,var(--accent) 15%,transparent);color:inherit;font-size:14px;line-height:1}.people-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.people-add .secondary{white-space:nowrap}.people-add input{min-width:0}
 
@@ -594,3 +595,196 @@ main.dark-mode .mood-okay{color:#ded9e8;background:#3a3545}
 .report-note{overflow-wrap:anywhere;word-break:break-word}
 .entry-links button,.link-options button{max-width:min(100%,320px)}
 .command-palette footer span:not(:last-child){display:none}.command-palette footer{justify-content:flex-end}.command-palette footer span:last-child{margin-left:0}
+
+/* ---------------------------------------------------------------------------
+   Motion.
+
+   The app used to be completely inert — hovers changed colour and nothing else
+   ever moved. Everything below is opacity/transform only, so nothing here can
+   change layout or reflow a grid. Lists animate in with a short stagger,
+   dialogs grow out of the middle, and the two moments worth celebrating (a
+   piece of work closing, the focus queue emptying) get a shape of their own.
+
+   Every rule is switched off wholesale by the prefers-reduced-motion block at
+   the end of this file. Nothing sets opacity:0 outside a keyframe, so with
+   animation disabled every element still renders normally.
+--------------------------------------------------------------------------- */
+@keyframes sp-rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes sp-fade{from{opacity:0}to{opacity:1}}
+@keyframes sp-pop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes sp-toast{from{opacity:0;transform:translate(-50%,18px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes sp-bloom{0%{transform:scale(.7);opacity:0}55%{transform:scale(1.08);opacity:1}100%{transform:scale(1);opacity:1}}
+@keyframes sp-sheen{from{background-position:-220% 0}to{background-position:220% 0}}
+@keyframes sp-pulse{0%,100%{transform:scale(1)}45%{transform:scale(1.14)}}
+@keyframes sp-flicker{0%,100%{transform:scale(1) rotate(-2deg)}50%{transform:scale(1.12) rotate(3deg)}}
+@keyframes sp-ring{from{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent)}to{box-shadow:0 0 0 14px transparent}}
+
+/* Sections remount when you switch pages, so a plain mount animation is enough. */
+.workspace>section,.workspace>header{animation:sp-rise .34s cubic-bezier(.22,.68,.36,1) both}
+.workspace>header{animation-duration:.28s}
+
+/* Lists. The stagger stops after ten so a long queue does not crawl in. */
+.issue-list>button,.focus-now-list>.focus-item,.metric-row>*,.diary-entry-list>.diary-entry,
+.day-issues>button,.day-diary>button,.review-card li,.triage-list>button,.memory-list>*{animation:sp-rise .32s cubic-bezier(.22,.68,.36,1) both}
+.issue-list>button:nth-child(1),.focus-now-list>.focus-item:nth-child(1),.metric-row>:nth-child(1),.diary-entry-list>.diary-entry:nth-child(1),.day-issues>button:nth-child(1),.review-card li:nth-child(1),.triage-list>button:nth-child(1){animation-delay:.02s}
+.issue-list>button:nth-child(2),.focus-now-list>.focus-item:nth-child(2),.metric-row>:nth-child(2),.diary-entry-list>.diary-entry:nth-child(2),.day-issues>button:nth-child(2),.review-card li:nth-child(2),.triage-list>button:nth-child(2){animation-delay:.055s}
+.issue-list>button:nth-child(3),.focus-now-list>.focus-item:nth-child(3),.metric-row>:nth-child(3),.diary-entry-list>.diary-entry:nth-child(3),.day-issues>button:nth-child(3),.review-card li:nth-child(3),.triage-list>button:nth-child(3){animation-delay:.09s}
+.issue-list>button:nth-child(4),.metric-row>:nth-child(4),.diary-entry-list>.diary-entry:nth-child(4),.day-issues>button:nth-child(4),.review-card li:nth-child(4),.triage-list>button:nth-child(4){animation-delay:.125s}
+.issue-list>button:nth-child(5),.diary-entry-list>.diary-entry:nth-child(5),.day-issues>button:nth-child(5),.review-card li:nth-child(5){animation-delay:.16s}
+.issue-list>button:nth-child(6),.diary-entry-list>.diary-entry:nth-child(6),.review-card li:nth-child(6){animation-delay:.195s}
+.issue-list>button:nth-child(7),.diary-entry-list>.diary-entry:nth-child(7),.review-card li:nth-child(7){animation-delay:.23s}
+.issue-list>button:nth-child(8),.diary-entry-list>.diary-entry:nth-child(8),.review-card li:nth-child(8){animation-delay:.265s}
+.issue-list>button:nth-child(n+9),.diary-entry-list>.diary-entry:nth-child(n+9){animation-delay:.3s}
+
+/* Hover lift. .metric-card and .triage-list already had transform on hover with no
+   transition to carry it — these give every card the same easing. */
+.issue-card,.diary-entry,.calendar-day,.day-issues>button,.day-diary-entry,.review-card li>button,
+.triage-list>button,.daily-check-in-launch,.look-back,.person-chip,.focus-item,.insight-panel,
+.command-results button,.mood-picker button,.paper-swatch,.filter-pills button,.mood-filter .mood-tag{
+  transition:transform .18s cubic-bezier(.22,.68,.36,1),border-color .18s ease,background .18s ease,box-shadow .18s ease,color .18s ease}
+.issue-card:hover,.diary-entry:hover,.calendar-day:hover,.day-issues>button:hover,.day-diary-entry:hover,
+.review-card li>button:hover,.look-back:hover{transform:translateY(-2px)}
+.issue-card:active,.diary-entry:active,.calendar-day:active{transform:translateY(0) scale(.995)}
+.mood-picker button.mood-selected{animation:sp-pulse .3s ease}
+.mood-picker button:hover{transform:translateY(-2px)}
+.paper-swatch.is-chosen{animation:sp-pulse .3s ease}
+.primary,.secondary,nav button,.focus-actions button{transition:transform .16s cubic-bezier(.22,.68,.36,1),background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease}
+.primary:hover{transform:translateY(-1px);box-shadow:0 10px 20px #d9579433}
+.primary:active,.secondary:active{transform:translateY(1px)}
+nav button:hover{transform:translateX(2px)}
+.nav-active{animation:sp-fade .25s ease both}
+
+/* Dialogs grow out of the middle instead of appearing. */
+.modal-backdrop{animation:sp-fade .18s ease both}
+.modal-backdrop>*{animation:sp-pop .26s cubic-bezier(.22,.68,.36,1) both}
+.command-backdrop>.command-palette{animation:sp-pop .2s cubic-bezier(.22,.68,.36,1) both}
+/* The bar is centred with translateX(-50%), so its entry keyframe has to carry that
+   across or the toast lands hard against the left edge. */
+.undo-bar{animation:sp-toast .28s cubic-bezier(.22,.68,.36,1) both}
+
+/* Bars and meters fill rather than snap. */
+.progress-track span,.theme-track span,.clock-bars .theme-track span{transition:width .6s cubic-bezier(.22,.68,.36,1)}
+.ribbon-block{animation:sp-rise .3s ease both}
+.switch-track::after{transition:transform .2s cubic-bezier(.34,1.4,.5,1)}
+
+/* ---------------------------------------------------------------------------
+   Completion moments.
+--------------------------------------------------------------------------- */
+.undo-bar.is-win{background:linear-gradient(115deg,#2f6b45,#3f7f52);color:#fff}
+.undo-bar.is-win .win-copy{display:grid;gap:2px;white-space:normal;overflow:hidden}
+.undo-bar.is-win strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;font-size:13px}
+.undo-bar.is-win small{color:inherit;opacity:.84;font-size:11px;line-height:1.4}
+.win-mark{display:grid;place-items:center;flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.18);font-size:14px;animation:sp-bloom .42s cubic-bezier(.3,1.3,.5,1) both}
+
+.focus-now.just-cleared{position:relative;overflow:hidden}
+.focus-now.just-cleared::before{content:"";position:absolute;left:50%;top:50%;width:min(520px,120%);aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,#4f7b54 22%,transparent),transparent 62%);animation:sp-bloom .8s cubic-bezier(.3,1.1,.5,1) both;pointer-events:none}
+.focus-now.just-cleared>*{position:relative;z-index:1}
+.focus-now.just-cleared .eyebrow{color:#4f7b54}
+.dark-mode .focus-now.just-cleared .eyebrow{color:#8ab88b}
+.cleared-mark{display:inline-grid;place-items:center;width:38px;height:38px;margin-bottom:12px;border-radius:12px;color:#fff;background:linear-gradient(135deg,#4f7b54,#6d9a63);font-size:19px;animation:sp-bloom .5s .1s cubic-bezier(.3,1.3,.5,1) both,sp-ring 1.1s .5s ease-out}
+.focus-now-intro>p.cleared-note{margin:10px 0 0;max-width:none;color:var(--text);font-size:12px;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,#4f7b54 12%,transparent);color:var(--text);font-size:12px;line-height:1.5;animation:sp-rise .4s .22s cubic-bezier(.22,.68,.36,1) both}
+.focus-now-intro>p.cleared-note strong{font-weight:800}
+
+/* ---------------------------------------------------------------------------
+   Diary streak, surfaced where you actually write.
+--------------------------------------------------------------------------- */
+.streak-banner{display:flex;align-items:center;gap:11px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--border));border-radius:12px;background:linear-gradient(110deg,color-mix(in srgb,var(--accent-soft) 60%,var(--panel)),var(--panel));animation:sp-rise .34s .06s cubic-bezier(.22,.68,.36,1) both}
+.streak-banner .streak-flame{flex:0 0 auto;font-size:20px;line-height:1;animation:sp-flicker 2.6s ease-in-out infinite}
+.streak-banner div{display:grid;gap:2px;min-width:0}
+.streak-banner strong{font-size:14px}
+.streak-banner small{color:var(--subtext);font-size:11px;line-height:1.45}
+.streak-banner.is-cold{border-color:var(--border);background:var(--panel-soft)}
+.streak-banner.is-cold .streak-flame{animation:none;opacity:.6}
+.diary-composer .diary-stats,.diary-companion .diary-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+.diary-companion .diary-stats strong{font-size:21px}
+.diary-stats .stat-best{color:var(--accent-deep)}
+
+/* Rotating line on the work side, so the dashboard stops reading like a status page. */
+.day-line{margin:-18px 0 22px;color:var(--subtext);font-size:13px;font-style:italic;line-height:1.5;animation:sp-fade .5s .1s ease both}
+.day-line b{color:var(--accent-deep);font-style:normal;font-weight:800}
+
+/* ---------------------------------------------------------------------------
+   Command palette: keyboard selection needs a visible cursor.
+--------------------------------------------------------------------------- */
+.command-results button.is-active{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+.command-results button.is-active strong{color:var(--accent-deep)}
+.command-results .command-mood{font-size:13px}
+
+/* ---------------------------------------------------------------------------
+   Calendar days carry the mood of what you wrote that day.
+--------------------------------------------------------------------------- */
+.calendar-day.has-mood{position:relative}
+.calendar-day.has-mood::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:0 0 6px 6px;background:var(--day-mood,transparent)}
+.calendar-day.mood-bright{--day-mood:#e8b93f;background:color-mix(in srgb,#fff0bd 42%,var(--card,#fff))}
+.calendar-day.mood-calm{--day-mood:#5aa287;background:color-mix(in srgb,#ddf1e9 46%,var(--card,#fff))}
+.calendar-day.mood-okay{--day-mood:#a99bb4;background:color-mix(in srgb,#efe9f2 46%,var(--card,#fff))}
+.calendar-day.mood-low{--day-mood:#7d95bd;background:color-mix(in srgb,#e5ecf7 46%,var(--card,#fff))}
+.calendar-day.mood-anxious{--day-mood:#a37fbc;background:color-mix(in srgb,#eee4f5 46%,var(--card,#fff))}
+.calendar-day.mood-frustrated{--day-mood:#c9727e;background:color-mix(in srgb,#fde4e7 46%,var(--card,#fff))}
+.dark-mode .calendar-day.has-mood{background:color-mix(in srgb,var(--day-mood) 17%,var(--card))}
+.calendar-legend{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.calendar-legend>span:first-child{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.7px}
+.legend-dot{display:inline-flex;align-items:center;gap:5px;color:var(--subtext);font-size:10px}
+.legend-dot i{width:9px;height:9px;border-radius:3px;font-style:normal}
+.legend-bright i{background:#e8b93f}.legend-calm i{background:#5aa287}.legend-okay i{background:#a99bb4}
+.legend-low i{background:#7d95bd}.legend-anxious i{background:#a37fbc}.legend-frustrated i{background:#c9727e}
+
+/* ---------------------------------------------------------------------------
+   Signal Garden: progress that feels alive without turning work into points.
+--------------------------------------------------------------------------- */
+.garden-card{display:grid;grid-template-columns:minmax(0,1fr) 210px;align-items:center;gap:24px;margin:0 0 22px;padding:19px 24px;border:1px solid color-mix(in srgb,#5f9368 25%,var(--border));border-radius:17px;background:linear-gradient(120deg,color-mix(in srgb,#eaf6e9 62%,var(--panel)),color-mix(in srgb,var(--accent-soft) 24%,var(--panel)));overflow:hidden}.garden-copy h2,.review-garden h2{margin:2px 0 6px;font-size:19px}.garden-copy>p:not(.eyebrow),.review-garden>div>p:not(.eyebrow){margin:0;color:var(--subtext);font-size:12px;line-height:1.5}.garden-milestones{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.garden-milestones span{padding:5px 8px;border:1px solid var(--border);border-radius:999px;background:color-mix(in srgb,var(--panel) 82%,transparent);color:var(--muted);font-size:9px;font-weight:800}.garden-milestones span::before{content:"·";margin-right:4px}.garden-milestones span.is-grown{border-color:color-mix(in srgb,#5f9368 40%,var(--border));color:#477352;background:color-mix(in srgb,#dff1df 68%,var(--panel))}.garden-milestones span.is-grown::before{content:"✓"}.dark-mode .garden-card{background:linear-gradient(120deg,color-mix(in srgb,#5f9368 14%,var(--panel)),var(--panel))}.dark-mode .garden-milestones span.is-grown{color:#9bc6a0;background:color-mix(in srgb,#5f9368 18%,var(--panel))}
+.signal-garden{position:relative;width:190px;height:116px;justify-self:end;isolation:isolate}.signal-garden>*{position:absolute;display:block}.garden-glow{left:50%;top:48%;width:110px;height:82px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,#edb4cf 36%,transparent),transparent 68%);transform:translate(-50%,-50%) scale(.65);opacity:0;transition:.65s ease}.garden-soil{left:27px;right:18px;bottom:8px;height:20px;border-radius:50%;background:linear-gradient(#d6b59a,#b8876c);box-shadow:inset 0 5px 8px #fff4}.garden-stem{left:96px;bottom:23px;width:5px;height:54px;border-radius:5px;background:linear-gradient(90deg,#477352,#78a66c);transform-origin:bottom;transform:scaleY(.05);opacity:.25;transition:.55s cubic-bezier(.22,.9,.36,1)}.garden-leaf{bottom:43px;width:30px;height:16px;background:linear-gradient(135deg,#74a86d,#477352);opacity:0;transition:.45s .16s cubic-bezier(.3,1.3,.5,1)}.leaf-left{left:69px;border-radius:22px 3px 22px 3px;transform:rotate(18deg) scale(.2);transform-origin:right}.leaf-right{left:99px;bottom:53px;border-radius:3px 22px 3px 22px;transform:rotate(-16deg) scale(.2);transform-origin:left}.garden-petal{left:82px;top:23px;width:32px;height:21px;border-radius:70% 35% 70% 35%;background:linear-gradient(135deg,#ed75a8,#bd4f86);transform-origin:16px 26px;opacity:0;transition:.42s cubic-bezier(.3,1.3,.5,1)}.petal-one{transform:rotate(0deg) translateY(-18px) scale(.1)}.petal-two{transform:rotate(60deg) translateY(-18px) scale(.1)}.petal-three{transform:rotate(120deg) translateY(-18px) scale(.1)}.petal-four{transform:rotate(180deg) translateY(-18px) scale(.1)}.petal-five{transform:rotate(240deg) translateY(-18px) scale(.1)}.petal-six{transform:rotate(300deg) translateY(-18px) scale(.1)}.garden-heart{left:88px;top:43px;width:20px;height:20px;border-radius:50%;background:#f5c95b;box-shadow:inset 0 0 0 4px #fff5;opacity:0;transform:scale(.1);transition:.4s .22s cubic-bezier(.3,1.4,.5,1)}.garden-spark{z-index:2;color:#d8669a;opacity:0}.spark-one{left:42px;top:17px}.spark-two{right:28px;top:35px;font-size:24px}.stage-1 .garden-stem,.stage-2 .garden-stem,.stage-3 .garden-stem,.stage-4 .garden-stem{transform:scaleY(1);opacity:1}.stage-1 .garden-leaf,.stage-2 .garden-leaf,.stage-3 .garden-leaf,.stage-4 .garden-leaf{opacity:1}.stage-1 .leaf-left,.stage-2 .leaf-left,.stage-3 .leaf-left,.stage-4 .leaf-left{transform:rotate(18deg) scale(1)}.stage-1 .leaf-right,.stage-2 .leaf-right,.stage-3 .leaf-right,.stage-4 .leaf-right{transform:rotate(-16deg) scale(1)}.stage-2 .petal-one,.stage-2 .petal-four,.stage-3 .garden-petal,.stage-4 .garden-petal{opacity:1}.stage-2 .petal-one,.stage-3 .petal-one,.stage-4 .petal-one{transform:rotate(0deg) translateY(-18px) scale(1)}.stage-2 .petal-four,.stage-3 .petal-four,.stage-4 .petal-four{transform:rotate(180deg) translateY(-18px) scale(1)}.stage-3 .petal-two,.stage-4 .petal-two{transform:rotate(60deg) translateY(-18px) scale(1)}.stage-3 .petal-three,.stage-4 .petal-three{transform:rotate(120deg) translateY(-18px) scale(1)}.stage-3 .petal-five,.stage-4 .petal-five{transform:rotate(240deg) translateY(-18px) scale(1)}.stage-3 .petal-six,.stage-4 .petal-six{transform:rotate(300deg) translateY(-18px) scale(1)}.stage-3 .garden-heart,.stage-4 .garden-heart{opacity:1;transform:scale(1)}.stage-4 .garden-glow{opacity:1;transform:translate(-50%,-50%) scale(1)}.stage-4 .garden-spark{opacity:1;animation:sp-flicker 2.5s ease-in-out infinite}.signal-garden.is-compact{width:170px;height:105px;transform:scale(.9);transform-origin:right center}
+.review-garden{display:grid;grid-template-columns:minmax(0,1fr) 185px;align-items:center;gap:18px;background:linear-gradient(120deg,color-mix(in srgb,#eaf6e9 55%,var(--panel)),var(--panel))}.dark-mode .review-garden{background:linear-gradient(120deg,color-mix(in srgb,#5f9368 13%,var(--panel)),var(--panel))}
+
+/* One visible daily mission, with a calm sense of movement. */
+.focus-progress{display:flex;align-items:center;gap:8px;margin:8px 0 10px}.focus-progress>span{display:flex;gap:4px}.focus-progress i{width:18px;height:6px;border-radius:99px;background:color-mix(in srgb,var(--muted) 24%,transparent);transition:background .35s,transform .35s}.focus-progress i.is-done{background:linear-gradient(90deg,#5f9368,#89b078);transform:scaleX(1.05)}.focus-progress strong{color:var(--subtext);font-size:10px}.focus-item.is-completing{pointer-events:none;animation:sp-focus-away .28s cubic-bezier(.4,0,.8,.4) forwards}.focus-item.is-completing::after{content:"✦";position:absolute;right:18px;color:var(--accent);font-size:18px;animation:sp-bloom .3s ease both}.focus-item{position:relative}@keyframes sp-focus-away{to{opacity:0;transform:translateX(18px) scale(.97)}}
+
+/* The check-in card now owns the whole check-in invitation. */
+.check-in-card{position:relative;overflow:hidden;padding-right:48px!important;background:linear-gradient(135deg,color-mix(in srgb,var(--accent-soft) 62%,var(--panel)),var(--panel))!important}.check-in-card::after{content:"◷";position:absolute;right:14px;top:50%;display:grid;place-items:center;width:27px;height:27px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--border));border-radius:50%;color:var(--accent-deep);transform:translateY(-50%);transition:transform .25s}.check-in-card:hover::after{transform:translateY(-50%) rotate(18deg) scale(1.06)}.check-in-card.good::after{content:"✓";color:#477352;border-color:#7ea786;background:#e9f5e8}
+
+@media(max-width:950px){.dashboard-switcher .check-in-card{grid-column:1/-1}.garden-card{grid-template-columns:minmax(0,1fr) 180px}}
+@media(max-width:650px){.garden-card{grid-template-columns:1fr auto;padding:17px;gap:8px}.garden-card .signal-garden{width:112px;transform:scale(.72);transform-origin:right center;margin-right:-15px}.garden-copy>p:not(.eyebrow){display:none}.garden-milestones{grid-column:1/-1}.review-garden{grid-template-columns:1fr auto}.review-garden .signal-garden{width:105px;transform:scale(.68);transform-origin:right center}.check-in-card{min-height:104px!important}.focus-progress{margin-bottom:8px}}
+
+/* The garden illustration uses one coherent five-petal bloom rather than
+   independently positioned CSS petals. */
+.garden-svg{inset:0;width:100%;height:100%;overflow:visible}.garden-svg .svg-garden-soil{filter:drop-shadow(0 3px 3px #7c4c3030)}.garden-svg .svg-garden-stem{stroke-dasharray:90;stroke-dashoffset:90;transition:stroke-dashoffset .55s cubic-bezier(.22,.9,.36,1)}.garden-svg .svg-garden-leaf{opacity:0;transform:scale(.25);transform-box:fill-box;transform-origin:center;transition:opacity .35s .18s,transform .45s .18s cubic-bezier(.3,1.25,.5,1)}.garden-svg .svg-petal{opacity:0;transform-box:fill-box;transform-origin:center;scale:.2;transition:opacity .34s,scale .45s cubic-bezier(.3,1.25,.5,1)}.garden-svg .svg-garden-heart,.garden-svg .svg-garden-heart-light{opacity:0;transform-box:fill-box;transform-origin:center;scale:.2;transition:opacity .3s .18s,scale .4s .18s cubic-bezier(.3,1.35,.5,1)}.garden-svg .svg-garden-glow,.garden-svg .svg-garden-sparks{opacity:0;transition:opacity .45s}.garden-svg .svg-garden-seed{opacity:1;transition:opacity .25s}.signal-garden.stage-1 .svg-garden-seed,.signal-garden.stage-2 .svg-garden-seed,.signal-garden.stage-3 .svg-garden-seed,.signal-garden.stage-4 .svg-garden-seed{opacity:0}.signal-garden.stage-1 .svg-garden-stem,.signal-garden.stage-2 .svg-garden-stem,.signal-garden.stage-3 .svg-garden-stem,.signal-garden.stage-4 .svg-garden-stem{stroke-dashoffset:0}.signal-garden.stage-1 .svg-garden-leaf,.signal-garden.stage-2 .svg-garden-leaf,.signal-garden.stage-3 .svg-garden-leaf,.signal-garden.stage-4 .svg-garden-leaf{opacity:1;transform:none}.signal-garden.stage-2 .petal-top,.signal-garden.stage-2 .petal-left,.signal-garden.stage-2 .petal-right,.signal-garden.stage-3 .svg-petal,.signal-garden.stage-4 .svg-petal{opacity:1;scale:1}.signal-garden.stage-3 .svg-garden-heart,.signal-garden.stage-3 .svg-garden-heart-light,.signal-garden.stage-4 .svg-garden-heart,.signal-garden.stage-4 .svg-garden-heart-light{opacity:1;scale:1}.signal-garden.stage-4 .svg-garden-glow,.signal-garden.stage-4 .svg-garden-sparks{opacity:1}.signal-garden.stage-4 .svg-garden-sparks{animation:sp-flicker 2.5s ease-in-out infinite}
+
+/* ---------------------------------------------------------------------------
+   Anyone who has asked their system to calm down gets the old, still app.
+--------------------------------------------------------------------------- */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .issue-card:hover,.diary-entry:hover,.calendar-day:hover,.day-issues>button:hover,.day-diary-entry:hover,
+  .review-card li>button:hover,.look-back:hover,.primary:hover,nav button:hover,.mood-picker button:hover{transform:none}
+}
+
+/* ---------------------------------------------------------------------------
+   The mark.
+
+   Was the ✦ character; is now app/petal.tsx. Two things needed fixing in CSS.
+
+   First, .brand-mark sat in a flex row beside the workspace name with no
+   flex-shrink, so a long profile name squeezed it: 36×36 became 25×36 for
+   "Ewuresi Attabra" and 18×36 for a longer one — the rounded square rendered
+   as a vertical capsule, and the flower inside it would have been ovalised
+   with it. Every mark tile is now flex-shrink:0.
+
+   Second, the drawn mark is an SVG, not a glyph, so the font-size on those
+   tiles no longer sizes it (the size prop does) and inline uses need real
+   vertical alignment rather than a text baseline.
+--------------------------------------------------------------------------- */
+.brand-mark,.companion-mark,.profile-mark,.lock-mark,.win-mark,.cleared-mark{flex-shrink:0}
+.petal-mark{display:block;overflow:visible}
+
+/* Inline in a heading: optically centred on the text, not sitting on its baseline. */
+h1 .title-petal,h2 .title-petal{display:inline-block;margin-left:.32em;vertical-align:-.12em;color:var(--accent)}
+h2 .title-petal{margin-left:.28em}
+
+/* The health card's mark stands in for a number, so it keeps that slot's colour. */
+.health-card>strong .petal-mark{color:#ce5d98}
+.dark-mode .health-card>strong .petal-mark,.health-card.healthy .petal-mark{color:currentColor}
+.diary-insights-empty>span .petal-mark,.diary-empty>span .petal-mark{margin:0 auto}
+
+/* A streak worth keeping should feel alive; sp-flicker already runs on this span. */
+.streak-banner .streak-flame .petal-mark{color:var(--accent)}
+.streak-banner.is-cold .streak-flame{font-size:20px}

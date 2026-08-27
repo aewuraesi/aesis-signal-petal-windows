@@ -38,7 +38,9 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   assert.match(page, /PRIVATE REFLECTIONS/);
   assert.match(page, /Everything here is worked out on this device/);
   assert.match(page, /no plaintext copy is allowed to linger/);
-  assert.match(page, /FOCUS NOW/);
+  assert.match(page, /TODAY’S THREE MOVES/);
+  assert.match(page, /TODAY’S SIGNAL GARDEN/);
+  assert.match(page, /WEEK IN BLOOM/);
   assert.match(page, /Followed up/);
   assert.match(page, /rescheduleFocus/);
   assert.match(page, /handled for today/);

@@ -1,15 +1,15 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <title>Signal Petal</title>
-  <defs><linearGradient id="petal" x1="72" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse"><stop stop-color="#E95D9C"/><stop offset="1" stop-color="#9B64C2"/></linearGradient></defs>
-  <rect x="32" y="32" width="448" height="448" rx="128" fill="url(#petal)"/>
-  <g fill="#FFF9FC">
+  <!-- Full bleed with the mark inside the 40% safe radius: Android and the PWA installer
+       apply their own mask to this one, so rounded corners here would be clipped twice. -->
+  <defs><linearGradient id="petalM" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse"><stop stop-color="#E95D9C"/><stop offset="1" stop-color="#9B64C2"/></linearGradient></defs>
+  <rect width="512" height="512" fill="url(#petalM)"/>
+  <g fill="#FFF9FC" transform="translate(256 256) scale(0.78) translate(-256 -256)">
     <path d="M256 106C324 152 333 224 256 276C179 224 188 152 256 106Z"/>
     <path d="M256 106C324 152 333 224 256 276C179 224 188 152 256 106Z" transform="rotate(72 256 256)"/>
     <path d="M256 106C324 152 333 224 256 276C179 224 188 152 256 106Z" transform="rotate(144 256 256)"/>
     <path d="M256 106C324 152 333 224 256 276C179 224 188 152 256 106Z" transform="rotate(216 256 256)"/>
     <path d="M256 106C324 152 333 224 256 276C179 224 188 152 256 106Z" transform="rotate(288 256 256)"/>
   </g>
-  <!-- The eye is the tile's own gradient sampled at the centre, so it matches exactly
-       without a second colour to keep in step with the brand. -->
-  <circle cx="256" cy="256" r="29" fill="url(#petal)"/>
+  <circle cx="256" cy="256" r="22.6" fill="url(#petalM)"/>
 </svg>
