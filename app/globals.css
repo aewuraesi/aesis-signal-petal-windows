@@ -785,6 +785,106 @@ h2 .title-petal{margin-left:.28em}
 .dark-mode .health-card>strong .petal-mark,.health-card.healthy .petal-mark{color:currentColor}
 .diary-insights-empty>span .petal-mark,.diary-empty>span .petal-mark{margin:0 auto}
 
+/* Focused check-in and Insights refresh. The legacy surfaces remain in the source for
+   backwards-compatible state, but only the staged and privacy-aware versions render. */
+.insights{display:none}
+main>.modal-backdrop:has(.daily-check-in-modal){display:none}
+.daily-check-in-modal-v2{position:relative;width:min(720px,100%);max-height:calc(100dvh - 40px);overflow-y:auto;padding:28px;border:1px solid var(--border);border-radius:18px;background:var(--panel);color:var(--text);box-shadow:0 22px 60px rgb(48 19 37 / 35%)}
+.check-in-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:20px 0}.check-in-steps span{display:flex;align-items:center;gap:7px;padding:9px;border-radius:10px;background:var(--panel-soft);color:var(--muted);font-size:10px;font-weight:800}.check-in-steps b{display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--border);border-radius:50%;font-size:9px}.check-in-steps span.is-active{background:var(--accent-soft);color:var(--accent-deep)}.check-in-steps span.is-active b{border-color:var(--accent);background:var(--panel)}
+.check-in-stage{min-height:310px}.check-in-change{display:grid;gap:4px;margin:-7px 0 18px;padding:12px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft)}.check-in-change span{color:var(--accent-deep);font-size:9px;font-weight:900;letter-spacing:.6px;text-transform:uppercase}.check-in-change strong{font-size:12px}.check-in-change small{color:var(--subtext);font-size:9px}
+.park-picker-v2{margin:0;padding:0;border:0}.park-picker-v2 legend{font-size:13px;font-weight:850}.park-picker-v2>p{margin:5px 0 12px;color:var(--subtext);font-size:10px;line-height:1.5}.park-picker-v2>div{display:grid;gap:7px}.park-picker-v2 label{display:flex;align-items:flex-start;gap:10px;padding:11px;border:1px solid var(--border);border-radius:10px;background:var(--panel-soft)}.park-picker-v2 label:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}.park-picker-v2 input{margin-top:3px;accent-color:var(--accent)}.park-picker-v2 label span{display:grid;gap:3px;min-width:0}.park-picker-v2 label strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.park-picker-v2 label small{color:var(--subtext);font-size:9px}.show-all-work{margin:10px 0 0;padding:0;border:0;background:transparent;color:var(--accent-deep);font-size:10px;font-weight:850}.resume-field{display:grid;gap:6px;margin-top:15px;padding:13px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft);font-size:11px;font-weight:850}.resume-field input{padding:9px;border:1px solid var(--border);border-radius:8px}.resume-field small{color:var(--subtext);font-size:9px;font-weight:500}.check-in-clear{display:grid;place-items:center;gap:6px;min-height:240px;text-align:center}.check-in-clear p{margin:0;color:var(--subtext);font-size:11px}.check-in-clear .petal-mark{color:var(--accent)}
+.tomorrow-stage{display:grid;gap:14px}.tomorrow-stage label{display:grid;gap:6px;font-size:11px;font-weight:850}.tomorrow-stage label small{color:var(--subtext);font-weight:500}.tomorrow-stage input,.tomorrow-stage textarea{width:100%;padding:11px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--text)}.tomorrow-stage textarea{min-height:74px;resize:vertical}.check-in-nav{margin-top:18px}.check-in-history-toggle{margin-top:13px;text-align:center}.check-in-history-toggle>button{padding:5px;border:0;background:transparent;color:var(--subtext);font-size:9px;font-weight:800}.check-in-receipt{display:grid;justify-items:center;gap:9px;padding:38px 14px 20px;text-align:center}.receipt-mark{display:grid;place-items:center;width:64px;height:64px;border-radius:22px;background:var(--accent-soft);color:var(--accent-deep)}.check-in-receipt h2{margin:0;font-size:25px}.check-in-receipt>p:not(.eyebrow){max-width:48ch;margin:0;color:var(--subtext);font-size:12px}.check-in-receipt blockquote{width:100%;margin:12px 0 5px;padding:15px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft);color:var(--text);font-size:13px;font-weight:750}.check-in-receipt .check-in-actions{margin-top:12px}
+
+.insights-2026{display:grid;gap:18px}.insights-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}.insight-section-tabs,.insight-range{display:flex;gap:4px;padding:4px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft)}.insight-section-tabs button,.insight-range button{padding:8px 11px;border:0;border-radius:8px;background:transparent;color:var(--subtext);font-size:10px;font-weight:850}.insight-section-tabs button.is-selected,.insight-range button.is-selected{background:var(--panel);color:var(--accent-deep);box-shadow:0 2px 8px rgb(60 28 48 / 8%)}
+.signal-headline{display:flex;align-items:center;justify-content:space-between;gap:22px;padding:24px 27px;border:1px solid var(--border);border-radius:16px;background:var(--panel)}.signal-headline.watch{border-color:#efcfbf;background:linear-gradient(110deg,color-mix(in srgb,#fff0e8 60%,var(--panel)),var(--panel))}.signal-headline.healthy{border-color:#d6eadc;background:linear-gradient(110deg,color-mix(in srgb,#eaf6ee 65%,var(--panel)),var(--panel))}.signal-headline h2{margin:0 0 6px;font-size:23px}.signal-headline p:not(.eyebrow){max-width:72ch;margin:0;color:var(--subtext);font-size:12px;line-height:1.55}.signal-headline button{flex:0 0 auto;padding:10px 13px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border));border-radius:9px;background:var(--panel);color:var(--accent-deep);font-size:10px;font-weight:900}.insight-context{display:flex;justify-content:space-between;gap:12px;margin:-7px 1px;color:var(--muted);font-size:9px;font-weight:800}.insight-metric-buttons button{min-width:0}.insight-drilldown{display:grid;gap:12px;padding:18px;border:1px solid var(--border);border-radius:14px;background:var(--panel)}.insight-drilldown h3{margin:0;font-size:16px}.insight-drilldown>div:last-child{display:grid;grid-template-columns:1fr 1fr;gap:7px}.insight-drilldown>div:last-child>button{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--border);border-radius:9px;text-align:left;background:var(--panel-soft);color:var(--text)}.insight-drilldown button span{display:grid;gap:3px;min-width:0}.insight-drilldown button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}.insight-drilldown button small{color:var(--subtext);font-size:8px}.insight-drilldown button b{color:var(--accent-deep);font-size:9px;white-space:nowrap}.insight-drilldown>p{margin:0;color:var(--subtext);font-size:11px}
+.bottleneck-center{padding:22px;border:1px solid var(--border);border-radius:15px;background:var(--panel)}.bottleneck-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.bottleneck-grid button{display:grid;gap:5px;min-width:0;padding:13px;border:1px solid var(--border);border-radius:11px;text-align:left;background:var(--panel-soft);color:var(--text)}.bottleneck-grid button:not(:disabled):hover{border-color:var(--accent)}.bottleneck-grid button:disabled{opacity:.65}.bottleneck-grid span{color:var(--subtext);font-size:9px}.bottleneck-grid strong{font-size:21px}.bottleneck-grid small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--subtext);font-size:8px}.memory-center-focused{margin:0}.memory-center-focused .memory-list{grid-template-columns:repeat(2,1fr)}.diary-insights-focused{margin:0;padding:22px;border:1px solid var(--border);border-radius:15px;background:var(--panel)}.privacy-controls{display:flex;gap:7px;flex-wrap:wrap}.privacy-controls button{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:999px;background:var(--panel-soft);color:var(--subtext);font-size:9px;font-weight:850}.privacy-controls button>span{display:grid;place-items:center;width:16px;height:16px;border:1px solid var(--border);border-radius:50%;font-size:8px}.privacy-controls button.is-on{border-color:color-mix(in srgb,var(--accent) 35%,var(--border));color:var(--accent-deep)}.privacy-controls button.is-on>span{border-color:var(--accent);background:var(--accent-soft)}
+@media(max-width:900px){.bottleneck-grid{grid-template-columns:1fr 1fr}.memory-center-focused .memory-list{grid-template-columns:1fr}}
+@media(max-width:650px){.daily-check-in-modal-v2{width:100%;height:calc(100dvh - max(12px,env(safe-area-inset-top)));max-height:none;padding:23px 16px calc(20px + env(safe-area-inset-bottom));border-radius:20px 20px 0 0}.check-in-steps span{justify-content:center;font-size:0}.check-in-steps b{font-size:9px}.check-in-stage{min-height:0}.check-in-nav{position:sticky;bottom:0;padding-top:20px;background:linear-gradient(transparent,var(--panel) 26%)}.check-in-nav button{flex:1;min-height:44px}.insights-toolbar{align-items:stretch;flex-direction:column}.insight-section-tabs,.insight-range{overflow-x:auto}.insight-section-tabs button,.insight-range button{flex:1;white-space:nowrap}.signal-headline{align-items:flex-start;flex-direction:column;padding:20px}.signal-headline button{width:100%}.insight-context{align-items:flex-start;flex-direction:column}.insight-drilldown>div:last-child,.bottleneck-grid{grid-template-columns:1fr}.diary-insights-focused{padding:17px}}
+
 /* A streak worth keeping should feel alive; sp-flicker already runs on this span. */
 .streak-banner .streak-flame .petal-mark{color:var(--accent)}
 .streak-banner.is-cold .streak-flame{font-size:20px}
+
+/* ---------------------------------------------------------------------------
+   Responsive corrections.
+--------------------------------------------------------------------------- */
+
+/* The bottom bar declared seven columns for six buttons, so the row sat 46px
+   left of centre with dead space on the right. Auto columns take however many
+   buttons exist, which also survives adding or removing a section later. */
+@media (max-width:650px){
+  .sidebar nav{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}
+  .sidebar nav button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+}
+
+/* Segmented controls are the one thing that may scroll sideways rather than
+   wrap — wrapping them mid-group reads as broken. They scroll inside
+   themselves, never pushing the page. */
+.insights-toolbar{min-width:0;max-width:100%}
+.insights-toolbar>*{min-width:0;max-width:100%}
+.insight-section-tabs,.insight-range{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
+.insight-section-tabs::-webkit-scrollbar,.insight-range::-webkit-scrollbar{display:none}
+.insight-section-tabs>*,.insight-range>*{flex:0 0 auto}
+@media (max-width:420px){
+  .insight-section-tabs button,.insight-range button{white-space:nowrap}
+}
+
+/* A year in pixels — one square per day, a whole year at a glance. */
+.year-card{overflow:hidden}
+.year-switch{display:flex;gap:4px;padding:3px;border:1px solid var(--border);border-radius:9px;background:var(--panel-soft)}
+.year-switch button{padding:5px 10px;border:0;border-radius:7px;background:transparent;color:var(--subtext);font-size:11px;font-weight:800}
+.year-switch button.is-selected{background:var(--panel);color:var(--accent-deep)}
+.year-grid{display:grid;gap:4px;margin:16px 0 4px;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;padding-bottom:2px}
+.year-row{display:grid;grid-template-columns:30px 1fr;align-items:center;gap:8px;min-width:0}
+.year-month{color:var(--subtext);font-size:10px;font-weight:800;text-align:right}
+.year-days{display:grid;grid-template-columns:repeat(31,minmax(7px,1fr));gap:3px;min-width:0}
+.year-pixel{width:100%;aspect-ratio:1;min-width:7px;border:0;border-radius:3px;padding:0;background:var(--panel-soft);transition:transform .12s ease}
+.year-pixel.is-blank{background:color-mix(in srgb,var(--subtext) 10%,transparent)}
+.year-pixel.is-future{background:transparent}
+.year-pixel.is-today{box-shadow:0 0 0 2px var(--accent)}
+button.year-pixel{cursor:pointer}
+button.year-pixel:hover{transform:scale(1.45);z-index:2;position:relative}
+.year-pixel.mood-bright{background:#ffd968}
+.year-pixel.mood-calm{background:#8fd3b8}
+.year-pixel.mood-okay{background:#d6d2dc}
+.year-pixel.mood-low{background:#9db6dc}
+.year-pixel.mood-anxious{background:#b98fd6}
+.year-pixel.mood-frustrated{background:#ef94a5}
+@media (max-width:650px){
+  .year-row{grid-template-columns:26px 1fr;gap:6px}
+  .year-days{gap:2px;grid-template-columns:repeat(31,minmax(6px,1fr))}
+  .year-pixel{border-radius:2px;min-width:6px}
+}
+
+/* The diary is a book, so its pages are numbered. */
+.page-number{display:block;margin-bottom:3px;color:color-mix(in srgb,var(--paper-ink,var(--subtext)) 55%,transparent);font-size:10px;font-style:normal;font-weight:800;letter-spacing:.6px;text-transform:uppercase}
+.diary-open-head .page-number{margin:0 auto 0 0;align-self:center}
+
+/* The shipped wall: closed work with the outcome you wrote. */
+.shipped-wall{margin-top:18px}
+.wall-count{color:var(--subtext);font-size:12px;white-space:nowrap}
+.wall-note{margin:0 0 16px}
+.wall-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:11px}
+.wall-card{min-width:0;display:grid;gap:6px;padding:15px;border:1px solid color-mix(in srgb,#3f9e6d 32%,var(--border));border-radius:13px;background:color-mix(in srgb,#3f9e6d 7%,var(--panel));text-align:left;color:var(--text)}
+.wall-card:hover{border-color:#3f9e6d;transform:translateY(-2px)}
+.wall-card strong{font-size:13px;line-height:1.4;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.wall-card p{margin:0;color:var(--subtext);font-size:12px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.wall-card small{color:var(--subtext);font-size:11px;opacity:.85}
+
+/* Motion: enough to feel alive, never enough to wait for. */
+.issue-card,.wall-card,.diary-page-open,.metric-card,.day-diary-entry,.review-card li>button,.look-back{transition:transform .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease}
+.issue-card:hover,.diary-page-open:hover,.look-back:hover{transform:translateY(-2px)}
+.mood-picker button{transition:transform .14s cubic-bezier(.34,1.56,.64,1),border-color .14s ease,background .14s ease}
+.mood-picker button:active{transform:scale(.94)}
+.mood-picker button.mood-selected{transform:translateY(-2px)}
+.primary,.secondary{transition:transform .12s ease,filter .16s ease,box-shadow .16s ease}
+.primary:active,.secondary:active{transform:translateY(1px)}
+@keyframes petal-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.undo-bar{animation:petal-rise .22s ease both}
+.diary-open,.confirm-card,.command-palette{animation:petal-rise .18s ease both}
+
+/* Anyone who has asked for less movement gets none of it. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .issue-card:hover,.diary-page-open:hover,.look-back:hover,.wall-card:hover,.year-pixel:hover,.ribbon-block:hover{transform:none}
+}

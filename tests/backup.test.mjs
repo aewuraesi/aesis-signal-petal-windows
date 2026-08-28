@@ -63,6 +63,13 @@ test("existing follow-up people are left alone", () => {
   assert.deepEqual(normaliseIssues([issue()])[0].followUpPeople, ["Chinonso"]);
 });
 
+test("generated related-work guesses are removed without touching real updates", () => {
+  const generated = { id: "auto", at: "2026-08-21T10:01:00.000Z", author: "Signal Petal", text: "Related past work: Work on my tracker Portal. Review those resolutions before starting from zero." };
+  const real = { id: "real", at: "2026-08-21T10:02:00.000Z", author: "Signal Petal", text: "A genuine recorded update." };
+  const [restored] = normaliseIssues([issue({ updates: [issue().updates[0], generated, real] })]);
+  assert.deepEqual(restored.updates.map(update => update.id), ["u1", "real"]);
+});
+
 test("Focus now handled timestamps survive restore and malformed values are dropped", () => {
   const handledAt = "2026-08-24T10:30:00.000Z";
   assert.equal(normaliseIssues([issue({ focusHandledAt: handledAt })])[0].focusHandledAt, handledAt);

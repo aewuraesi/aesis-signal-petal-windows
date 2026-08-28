@@ -14,6 +14,9 @@ const weekLabel = (start: Date) => `${new Intl.DateTimeFormat("en", { month: "sh
 type StatusDraft = { id: string; name: string; color: string; original?: string; kind?: "new" | "ongoing" | "terminal" };
 type MetricFocus = "home-total" | "home-open" | "home-overdue" | "home-resolved" | "mine-open" | "mine-overdue" | "mine-resolved" | "mine-total" | "attention-overdue" | "attention-oldest" | "attention-owners" | "attention-first";
 type FocusRecommendation = { issue: Issue; kind: "overdue" | "missing-eta" | "missing-action"; priority: number; reason: string; move: string };
+type InsightRange = "7" | "30" | "90" | "all";
+type InsightSection = "work" | "memory" | "rhythm";
+type InsightDrilldown = "completed" | "on-time" | "cycle" | "overdue" | "";
 
 // Tip up, base just past the bloom centre at (112, 52); rotating it sweeps the flower.
 const GARDEN_PETAL = "M112 8C127.5 21.2 129.7 43.2 112 58C94.3 43.2 96.5 21.2 112 8Z";
@@ -51,6 +54,41 @@ const defaultStatuses: Status[] = ["New", "Ongoing", "Waiting on dev", "Investig
 const defaultStatusColors: Record<string, string> = {
   New: "#715391", Ongoing: "#647a3e", "Waiting on dev": "#9b6519", Investigating: "#a03e74",
   Blocked: "#bd415e", "Pending Monitoring": "#407d78", "Awaiting approval": "#41658e", Resolved: "#4f7b54", Closed: "#4f7b54",
+};
+/* The greeting used to say "Good afternoon" at every hour, to the writer's ROLE
+   rather than their name. It is the first line of every session — it should at
+   least be true. */
+/* A year in pixels: one square per day, coloured by that day's mood. The classic
+   journalling keepsake, and the only view that shows a whole year at once. Days
+   with more than one page take the last mood written that day. */
+const yearGrid = (entries: DiaryEntry[], year: number) => {
+  const byDay = new Map<string, DiaryEntry>();
+  entries.forEach(entry => {
+    const at = new Date(entry.at);
+    if (at.getFullYear() !== year) return;
+    const key = dayKey(entry.at);
+    const held = byDay.get(key);
+    if (!held || new Date(entry.at).getTime() > new Date(held.at).getTime()) byDay.set(key, entry);
+  });
+  const today = dayKey(new Date().toISOString());
+  return Array.from({ length: 12 }, (_, month) => ({
+    month,
+    label: new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(year, month, 1)),
+    days: Array.from({ length: new Date(year, month + 1, 0).getDate() }, (_, index) => {
+      const day = index + 1;
+      const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      return { day, key, entry: byDay.get(key), isToday: key === today, isFuture: key > today };
+    }),
+  }));
+};
+const greetingFor = (hour: number, name: string) => {
+  const who = name || "there";
+  if (hour < 0) return `Hello, ${who}`;
+  if (hour < 5) return `Still up, ${who}`;
+  if (hour < 12) return `Good morning, ${who}`;
+  if (hour < 17) return `Good afternoon, ${who}`;
+  if (hour < 22) return `Good evening, ${who}`;
+  return `Winding down, ${who}`;
 };
 const themes = [
   ["rose", "Rose quartz"], ["lilac", "Lilac haze"], ["peach", "Peach fizz"], ["blush", "Blush bloom"], ["berry", "Berry luxe"],
@@ -156,6 +194,11 @@ const heavyMoods: Mood[] = ["low", "anxious", "frustrated"];
 const moodLabel = (mood: Mood) => (moods.find(item => item.value === mood)?.label ?? "okay").toLowerCase();
 const tidy = (value: string) => value.replace(/\s+/g, " ").trim().replace(/^[.,;:!?\-–—\s]+/, "").replace(/[.,;:\s]+$/, "");
 const clip = (value: string, limit = 96) => (value.length > limit ? `${value.slice(0, limit - 1).replace(/\s+\S*$/, "")}…` : value);
+const safeMemoryPreview = (value: string) => clip(value
+  .replace(/https?:\/\/\S+/gi, "[link]")
+  .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[technical detail]")
+  .replace(/\s+/g, " ")
+  .trim(), 170);
 // Quoted fragments end in "…" when clipped, so a trailing full stop would read as an ellipsis of four.
 const quote = (value: string) => `“${value}${/[.…?!]$/.test(value) ? "" : "."}”`;
 // Deterministic so an entry always renders the same reflection, while different entries vary.
@@ -512,6 +555,13 @@ export default function Home() {
   const [checkInCapacity, setCheckInCapacity] = useState<DailyCheckIn["capacity"]>("steady");
   const [checkInNote, setCheckInNote] = useState("");
   const [checkInParked, setCheckInParked] = useState<string[]>([]);
+  const [checkInStep, setCheckInStep] = useState(0);
+  const [checkInWin, setCheckInWin] = useState("");
+  const [checkInTomorrowMove, setCheckInTomorrowMove] = useState("");
+  const [checkInResumeAt, setCheckInResumeAt] = useState("");
+  const [checkInShowAll, setCheckInShowAll] = useState(false);
+  const [showCheckInHistory, setShowCheckInHistory] = useState(false);
+  const [checkInSaved, setCheckInSaved] = useState(false);
   const [statuses, setStatuses] = useState<Status[]>(defaultStatuses);
   const [statusColors, setStatusColors] = useState<Record<string, string>>(defaultStatusColors);
   const [statusDraft, setStatusDraft] = useState<StatusDraft[]>([]);
@@ -563,6 +613,10 @@ export default function Home() {
   const [focusRescheduleId, setFocusRescheduleId] = useState("");
   const [focusCompletingId, setFocusCompletingId] = useState("");
   const [section, setSection] = useState<"dashboard" | "calendar" | "metrics" | "diary" | "review" | "settings">("dashboard");
+  const [insightRange, setInsightRange] = useState<InsightRange>("30");
+  const [insightSection, setInsightSection] = useState<InsightSection>("work");
+  const [insightDrilldown, setInsightDrilldown] = useState<InsightDrilldown>("");
+  const [diaryInsightPrefs, setDiaryInsightPrefs] = useState({ mood: true, themes: true, words: false });
   const [reviewWeek, setReviewWeek] = useState<Date | null>(null);
   const [reviewRange, setReviewRange] = useState<"calendar" | "recent">("calendar");
   const [reviewCopied, setReviewCopied] = useState("");
@@ -576,12 +630,15 @@ export default function Home() {
   const [reminderTime, setReminderTime] = useState("16:30");
   const [reminderFeedback, setReminderFeedback] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  // -1 until hydration, so the server and the first client render agree.
+  const [nowHour, setNowHour] = useState(-1);
+  const [pixelYear, setPixelYear] = useState(0);
 
   useEffect(() => {
     let loadedIssues = seed;
     const saved = localStorage.getItem("signal-petal-issues");
     if (saved) {
-      try { loadedIssues = (JSON.parse(saved) as Issue[]).map(i => ({ ...i, followUpPeople: Array.isArray(i.followUpPeople) ? i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()) : [], createdAt: i.createdAt || i.updates?.[0]?.at || new Date().toISOString() })); setIssues(loadedIssues); }
+      try { loadedIssues = normaliseIssues(JSON.parse(saved) as Issue[]).map(i => ({ ...i, followUpPeople: i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()), createdAt: i.createdAt || i.updates?.[0]?.at || new Date().toISOString() })); setIssues(loadedIssues); }
       catch { localStorage.removeItem("signal-petal-issues"); }
     }
     const savedStatuses = localStorage.getItem("signal-petal-statuses");
@@ -602,6 +659,11 @@ export default function Home() {
     setReminderTime(localStorage.getItem("signal-petal-reminder-time") || "16:30");
     setDiaryFont(localStorage.getItem("signal-petal-diary-font") || "journal");
     setDiaryPaper(localStorage.getItem("signal-petal-diary-paper") || "cream");
+    const savedInsightPrefs = localStorage.getItem("signal-petal-insight-privacy");
+    if (savedInsightPrefs) {
+      try { const parsed = JSON.parse(savedInsightPrefs); if (parsed && typeof parsed === "object") setDiaryInsightPrefs(current => ({ ...current, ...parsed })); }
+      catch { localStorage.removeItem("signal-petal-insight-privacy"); }
+    }
     setLastBackup(localStorage.getItem("signal-petal-last-backup") || "");
     const savedCheckIns = localStorage.getItem("signal-petal-daily-check-ins");
     if (savedCheckIns) { try { const parsed = JSON.parse(savedCheckIns); if (Array.isArray(parsed)) setDailyCheckIns(parsed); } catch { localStorage.removeItem("signal-petal-daily-check-ins"); } }
@@ -624,6 +686,8 @@ export default function Home() {
     if (!readStoredVault()) setDiaryLog([...backfilled, ...loadedDiaryLog].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()));
     const savedReminders = localStorage.getItem("signal-petal-reminders-enabled");
     if ("Notification" in window) setRemindersEnabled(Notification.permission === "granted" && savedReminders !== "false");
+    setNowHour(new Date().getHours());
+    setPixelYear(new Date().getFullYear());
     setHydrated(true);
   }, []);
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-issues", JSON.stringify(issues)); }, [issues, hydrated]);
@@ -633,6 +697,7 @@ export default function Home() {
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminders-enabled", String(remindersEnabled)); }, [remindersEnabled, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminder-time", reminderTime); }, [reminderTime, hydrated]);
   useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-daily-check-ins", JSON.stringify(dailyCheckIns)); }, [dailyCheckIns, hydrated]);
+  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-insight-privacy", JSON.stringify(diaryInsightPrefs)); }, [diaryInsightPrefs, hydrated]);
   useEffect(() => {
     if (!hydrated) return;
     if (lockOn) {
@@ -657,6 +722,13 @@ export default function Home() {
   useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-diary-font", diaryFont); localStorage.setItem("signal-petal-diary-paper", diaryPaper); } }, [diaryFont, diaryPaper, hydrated]);
   useEffect(() => { if (hydrated && profile) { localStorage.setItem("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
   useEffect(() => { void notificationWorker(); }, []);
+  useEffect(() => {
+    const refresh = () => setNowHour(new Date().getHours());
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    const timer = window.setInterval(refresh, 600000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
   useEffect(() => {
     if (!undo) return;
     const timer = window.setTimeout(() => setUndo(null), 12000);
@@ -774,6 +846,21 @@ export default function Home() {
     const gardenStage = Math.min(4, Number(shipped.length > 0) + Number(pages.length > 0) + Number(checkIns.length > 0) + Number(focusMoves.length > 0));
     return { shipped, logged, stalled, pages, owed, carried, feel, checkIns, focusMoves, parkedIssues, priorities, gardenStage, isThisWeek: reviewRange === "calendar" && startOfWeek(today).getTime() === from, isRecent: reviewRange === "recent", from, to };
   }, [reviewWeek, reviewRange, issues, diaryEntries, dailyCheckIns]);
+  /* Numbered from the oldest page, so page 1 stays page 1 forever. */
+  const pageNumbers = useMemo(() => {
+    const order = [...diaryEntries].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return new Map(order.map((entry, index) => [entry.id, index + 1]));
+  }, [diaryEntries]);
+  const diaryYears = Array.from(new Set(diaryEntries.map(entry => new Date(entry.at).getFullYear()))).sort((a, b) => b - a);
+  const shownYear = pixelYear || new Date().getFullYear();
+  const pixels = useMemo(() => (diaryEntries.length ? yearGrid(diaryEntries, shownYear) : null), [diaryEntries, shownYear]);
+  const pixelsWritten = pixels ? pixels.reduce((sum, row) => sum + row.days.filter(day => day.entry).length, 0) : 0;
+  /* Work that closed WITH an outcome written down. A counter cannot show you what
+     you actually did this quarter; the outcomes in your own words can. */
+  const shippedWall = useMemo(() => issues
+    .filter(issue => isCompleteStatus(issue.status) && issue.outcome.trim())
+    .sort((a, b) => new Date(completedAtOf(b)).getTime() - new Date(completedAtOf(a)).getTime())
+    .slice(0, 12), [issues]);
   const backupAge = lastBackup ? daysSince(lastBackup) : null;
   const confirmEntry = diaryEntries.find(entry => entry.id === confirmDiaryDelete);
   const diaryNeedle = diaryQuery.trim().toLowerCase();
@@ -796,6 +883,7 @@ export default function Home() {
   const personalOwner = profile?.name || "You";
   const todayKey = dayKey(new Date().toISOString());
   const todayCheckIn = dailyCheckIns.find(checkIn => dayKey(checkIn.at) === todayKey);
+  const previousCheckIn = [...dailyCheckIns].filter(checkIn => dayKey(checkIn.at) !== todayKey).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
   const completedToday = issues.filter(issue => isCompleteStatus(issue.status) && dayKey(completedAtOf(issue)) === todayKey);
   const focusHandledToday = issues.filter(issue => issue.focusHandledAt && dayKey(issue.focusHandledAt) === todayKey);
   const openCount = issues.filter(i => !isCompleteStatus(i.status)).length;
@@ -805,6 +893,8 @@ export default function Home() {
   const mineOverdue = mine.filter(isOverdue);
   const mineResolved = mine.filter(i => isCompleteStatus(i.status));
   const attentionQueue = issues.filter(isOverdue).sort((a, b) => new Date(a.expected).getTime() - new Date(b.expected).getTime());
+  const parkableIssues = [...issues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => Number(isOverdue(b)) - Number(isOverdue(a)) || (a.expected ? new Date(a.expected).getTime() : Infinity) - (b.expected ? new Date(b.expected).getTime() : Infinity));
+  const checkInResumeMinimum = toDateTimeInput(addDays(new Date(), 1));
   const focusRecommendations = useMemo<FocusRecommendation[]>(() => issues
     .filter(issue => !isCompleteStatus(issue.status))
     .filter(issue => !issue.focusHandledAt || Date.now() - new Date(issue.focusHandledAt).getTime() >= 86400000)
@@ -856,7 +946,7 @@ export default function Home() {
   const dailyMovesDone = Math.min(3, focusHandledToday.length);
   const gardenStage = Math.min(4, Number(dailyMovesDone > 0) + Number(completedToday.length > 0) + Number(Boolean(todayCheckIn)) + Number(wroteToday));
   const dashboardView = filter === "Mine" ? "mine" : filter === "Overdue" ? "attention" : "overview";
-  const pageTitle = section === "review" ? "Your week in review" : section === "calendar" ? "Your work calendar" : section === "metrics" ? "Signals & progress" : section === "diary" ? "A quiet place to land" : section === "settings" ? "Settings" : filter === "Mine" ? "My actions" : filter === "Overdue" ? "Needs attention" : `Good afternoon, ${profile?.role || "there"}`;
+  const pageTitle = section === "review" ? "Your week in review" : section === "calendar" ? "Your work calendar" : section === "metrics" ? "Signals & progress" : section === "diary" ? "A quiet place to land" : section === "settings" ? "Settings" : filter === "Mine" ? "My actions" : filter === "Overdue" ? "Needs attention" : greetingFor(nowHour, profile?.name || "");
   /* Triage mode is the one screen that does not get the flourish — it is the view you
      open when something is wrong, and a little flower on it reads as tone-deaf. */
   const titleMark = !(section === "dashboard" && filter === "Overdue");
@@ -956,11 +1046,54 @@ export default function Home() {
   const missingOutcomeIssues = resolvedIssues.filter(issue => !issue.outcome.trim());
   const memoryIssue = issues.find(issue => issue.id === memoryIssueId);
   const incompleteMemories = resolvedIssues.filter(issue => !issue.memory?.resolution.trim() || !issue.memory?.learning.trim());
-  const completedWithTime = resolvedIssues.filter(i => i.completedAt || i.updates.length);
-  const completionHours = completedWithTime.map(i => (new Date(i.completedAt || i.updates[i.updates.length - 1].at).getTime() - new Date(i.createdAt).getTime()) / 3600000).filter(h => h >= 0);
-  const averageHours = completionHours.length ? completionHours.reduce((sum, h) => sum + h, 0) / completionHours.length : 0;
-  const dueResolved = resolvedIssues.filter(i => i.expected && (i.completedAt || i.updates.length));
-  const onTimeCount = dueResolved.filter(i => new Date(i.completedAt || i.updates[i.updates.length - 1].at).getTime() <= new Date(i.expected).getTime()).length;
+  const insightWindow = useMemo(() => {
+    const to = Date.now() + 1;
+    if (insightRange === "all") return { from: 0, to, previousFrom: 0, previousTo: 0, label: "All time" };
+    const days = Number(insightRange);
+    const today = new Date();
+    const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - days + 1).getTime();
+    return { from, to, previousFrom: from - days * 86400000, previousTo: from, label: `Last ${days} days` };
+  }, [insightRange]);
+  const inInsightWindow = (value: string, previous = false) => {
+    const at = new Date(value).getTime();
+    return previous ? at >= insightWindow.previousFrom && at < insightWindow.previousTo : at >= insightWindow.from && at < insightWindow.to;
+  };
+  const insightResolved = resolvedIssues.filter(issue => inInsightWindow(completedAtOf(issue)));
+  const previousResolved = insightRange === "all" ? [] : resolvedIssues.filter(issue => inInsightWindow(completedAtOf(issue), true));
+  const insightLogged = issues.filter(issue => inInsightWindow(issue.createdAt));
+  const previousLogged = insightRange === "all" ? [] : issues.filter(issue => inInsightWindow(issue.createdAt, true));
+  const insightCompletedWithTime = insightResolved.filter(issue => issue.completedAt || issue.updates.length);
+  const insightCompletionHours = insightCompletedWithTime.map(issue => (new Date(completedAtOf(issue)).getTime() - new Date(issue.createdAt).getTime()) / 3600000).filter(hours => hours >= 0);
+  const insightAverageHours = insightCompletionHours.length ? insightCompletionHours.reduce((sum, hours) => sum + hours, 0) / insightCompletionHours.length : 0;
+  const insightDueResolved = insightResolved.filter(issue => issue.expected && (issue.completedAt || issue.updates.length));
+  const insightOnTimeCount = insightDueResolved.filter(issue => new Date(completedAtOf(issue)).getTime() <= new Date(issue.expected).getTime()).length;
+  const insightOnTimeRate = insightDueResolved.length ? Math.round((insightOnTimeCount / insightDueResolved.length) * 100) : 0;
+  const previousDueResolved = previousResolved.filter(issue => issue.expected && (issue.completedAt || issue.updates.length));
+  const previousOnTimeCount = previousDueResolved.filter(issue => new Date(completedAtOf(issue)).getTime() <= new Date(issue.expected).getTime()).length;
+  const previousOnTimeRate = previousDueResolved.length ? Math.round((previousOnTimeCount / previousDueResolved.length) * 100) : 0;
+  const previousCompletionHours = previousResolved.map(issue => (new Date(completedAtOf(issue)).getTime() - new Date(issue.createdAt).getTime()) / 3600000).filter(hours => hours >= 0);
+  const previousAverageHours = previousCompletionHours.length ? previousCompletionHours.reduce((sum, hours) => sum + hours, 0) / previousCompletionHours.length : 0;
+  const previousOverdueCount = insightRange === "all" ? 0 : issues.filter(issue => {
+    const boundary = insightWindow.previousTo - 1;
+    const created = new Date(issue.createdAt).getTime();
+    const expected = issue.expected ? new Date(issue.expected).getTime() : Infinity;
+    const completed = isCompleteStatus(issue.status) ? new Date(completedAtOf(issue)).getTime() : Infinity;
+    return created <= boundary && expected < boundary && completed > boundary;
+  }).length;
+  const insightSampleSize = insightResolved.length + insightLogged.length;
+  const insightConfidence = insightSampleSize >= 12 ? "Strong signal" : insightSampleSize >= 5 ? "Growing signal" : "Early signal";
+  const insightHeadline = overdueCount ? `${overdueCount} overdue signal${overdueCount === 1 ? " needs" : "s need"} a decision` : missingEtaIssues.length ? `${missingEtaIssues.length} active item${missingEtaIssues.length === 1 ? " needs" : "s need"} an expectation` : "The queue is keeping its promises";
+  const insightHeadlineCopy = overdueCount ? "Start with the oldest handoff, record the next move, and reset the date if the promise has changed." : missingEtaIssues.length ? "A date makes follow-through measurable and gives the work permission to leave your head." : "No active work is overdue. Preserve the rhythm by recording outcomes as work closes.";
+  const insightDrilldownIssues = insightDrilldown === "completed" ? insightResolved : insightDrilldown === "on-time" ? insightDueResolved : insightDrilldown === "cycle" ? insightCompletedWithTime : insightDrilldown === "overdue" ? issues.filter(isOverdue) : [];
+  const waitingIssues = issues.filter(issue => !isCompleteStatus(issue.status) && /waiting|blocked|pending|approval/i.test(issue.status));
+  const staleIssues = issues.filter(issue => !isCompleteStatus(issue.status) && Date.now() - new Date(issue.updatedAt || issue.updates[issue.updates.length - 1]?.at || issue.createdAt).getTime() >= 3 * 86400000);
+  const oldestActive = [...issues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
+  /* Kept for the hidden legacy Insights markup while the new focused surface replaces it. */
+  const completedWithTime = resolvedIssues.filter(issue => issue.completedAt || issue.updates.length);
+  const completionHours = completedWithTime.map(issue => (new Date(completedAtOf(issue)).getTime() - new Date(issue.createdAt).getTime()) / 3600000).filter(hours => hours >= 0);
+  const averageHours = completionHours.length ? completionHours.reduce((sum, hours) => sum + hours, 0) / completionHours.length : 0;
+  const dueResolved = resolvedIssues.filter(issue => issue.expected && (issue.completedAt || issue.updates.length));
+  const onTimeCount = dueResolved.filter(issue => new Date(completedAtOf(issue)).getTime() <= new Date(issue.expected).getTime()).length;
   const onTimeRate = dueResolved.length ? Math.round((onTimeCount / dueResolved.length) * 100) : 0;
   const health = overdueCount > 0 || (dueResolved.length > 0 && onTimeRate < 80) ? "Needs improvement" : "Looking healthy";
   const appName = profile ? `${profile.name}'s Signal Petal` : "Signal Petal";
@@ -975,7 +1108,7 @@ export default function Home() {
   const commandItems: { key: string; group: string; icon: ReactNode; hint: string; label: string; run: () => void }[] = [
     ...commandActions.map(([id, icon, label, shortcut]) => ({ key: `action-${id}`, group: "QUICK ACTIONS", icon: icon === "✦" ? <Petal size={14}/> : icon, label, hint: shortcut, run: () => runCommand(id) })),
     ...commandIssues.map(issue => ({ key: `issue-${issue.id}`, group: "WORK ITEMS", icon: "↗", label: issue.title, hint: `${issue.owner} · ${issue.status}`, run: () => { setShowCommandPalette(false); openIssueDetail(issue.id); } })),
-    ...commandDiary.map(entry => ({ key: `diary-${entry.id}`, group: "REFLECTIONS", icon: moods.find(mood => mood.value === entry.mood)?.symbol ?? "✎", label: entry.title || "Untitled reflection", hint: `${moodName(entry.mood)} · ${dateLabel(entry.at)}`, run: () => { setShowCommandPalette(false); setSection("diary"); setOpenDiaryId(entry.id); } })),
+    ...commandDiary.map(entry => ({ key: `diary-${entry.id}`, group: "REFLECTIONS", icon: moods.find(mood => mood.value === entry.mood)?.symbol ?? "✎", label: entry.title || "Untitled reflection", hint: `${moodName(entry.mood)} · ${dateLabel(entry.at)}`, run: () => { setShowCommandPalette(false); setOpenDiaryId(entry.id); } })),
   ];
   // Clamped in render rather than reset from an effect, so a shrinking list can never point past its end.
   const commandCursor = commandItems.length ? Math.min(commandIndex, commandItems.length - 1) : 0;
@@ -1022,10 +1155,6 @@ export default function Home() {
     const issue = (kind === "eta" ? missingEtaIssues : missingOutcomeIssues)[0];
     if (issue) openIssueDetail(issue.id);
   }
-  function relatedResolvedWork(title: string, details: string) {
-    const terms = new Set(`${title} ${details}`.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
-    return resolvedIssues.map(issue => ({ issue, score: (issue.title.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []).filter(term => terms.has(term)).length + (issue.details.toLowerCase().match(/[a-z0-9]{5,}/g) ?? []).filter(term => terms.has(term)).length })).filter(match => match.score > 0).sort((a, b) => b.score - a.score).slice(0, 3).map(match => match.issue);
-  }
   function saveOperationalMemory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!memoryIssue) return;
@@ -1038,6 +1167,13 @@ export default function Home() {
     setCheckInCapacity(todayCheckIn?.capacity ?? "steady");
     setCheckInNote(todayCheckIn?.note ?? "");
     setCheckInParked(todayCheckIn?.parkedIssueIds ?? []);
+    setCheckInWin(todayCheckIn?.win ?? "");
+    setCheckInTomorrowMove(todayCheckIn?.tomorrowMove ?? "");
+    setCheckInResumeAt(todayCheckIn?.resumeAt ?? checkInResumeMinimum);
+    setCheckInStep(0);
+    setCheckInShowAll(false);
+    setShowCheckInHistory(false);
+    setCheckInSaved(false);
     setShowDailyCheckIn(true);
   }
   function saveDailyCheckIn(event: FormEvent<HTMLFormElement>) {
@@ -1046,11 +1182,22 @@ export default function Home() {
     const parked = issues.filter(issue => checkInParked.includes(issue.id));
     const capacityLabel = checkInCapacity === "high" ? "strong" : checkInCapacity === "low" ? "limited" : "steady";
     const parts = [`Capacity feels ${capacityLabel}.`, `${completedToday.length} item${completedToday.length === 1 ? "" : "s"} completed today.`, `${overdueCount} item${overdueCount === 1 ? " is" : "s are"} overdue.`];
-    if (parked.length) parts.push(`${parked.length} item${parked.length === 1 ? " is" : "s are"} intentionally waiting: ${parked.map(issue => issue.title).join(", ")}.`);
+    if (parked.length) parts.push(`${parked.length} item${parked.length === 1 ? " is" : "s are"} intentionally waiting${checkInResumeAt ? ` until ${dateLabel(checkInResumeAt)}` : ""}: ${parked.map(issue => issue.title).join(", ")}.`);
+    if (checkInWin.trim()) parts.push(`Today’s win: ${checkInWin.trim()}.`);
+    if (checkInTomorrowMove.trim()) parts.push(`Tomorrow’s first move: ${checkInTomorrowMove.trim()}.`);
     if (checkInNote.trim()) parts.push(checkInNote.trim());
-    const checkIn: DailyCheckIn = { id: todayCheckIn?.id ?? crypto.randomUUID(), at: now, capacity: checkInCapacity, note: checkInNote.trim(), parkedIssueIds: checkInParked, brief: parts.join(" ") };
+    const checkIn: DailyCheckIn = { id: todayCheckIn?.id ?? crypto.randomUUID(), at: now, capacity: checkInCapacity, note: checkInNote.trim(), parkedIssueIds: checkInParked, brief: parts.join(" "), win: checkInWin.trim(), tomorrowMove: checkInTomorrowMove.trim(), resumeAt: parked.length ? checkInResumeAt : undefined };
     setDailyCheckIns(items => [checkIn, ...items.filter(item => dayKey(item.at) !== todayKey)]);
-    setShowDailyCheckIn(false);
+    if (parked.length && checkInResumeAt) {
+      setIssues(items => items.map(issue => checkInParked.includes(issue.id) ? {
+        ...issue,
+        expected: checkInResumeAt,
+        updatedAt: now,
+        updates: [...issue.updates, { id: crypto.randomUUID(), at: now, author: personalOwner, text: `Intentionally deferred during the daily check-in until ${dateLabel(checkInResumeAt)}.` }],
+      } : issue));
+    }
+    setCheckInSaved(true);
+    setCheckInStep(3);
   }
   function applyFocusAction(issue: Issue, patch: Partial<Issue>, updateText: string, confirmation: string) {
     const before = issue;
@@ -1296,7 +1443,7 @@ export default function Home() {
     } catch { setTransferMessage("That backup code is not valid. Copy it again from the other Signal Petal address."); }
   }
   function addUpdate(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const text = String(form.get("update") || "").trim(); if (!text || !active) return; updateIssue({ updates: [...active.updates, { id: crypto.randomUUID(), at: new Date().toISOString(), author: personalOwner, text }] }); event.currentTarget.reset(); }
-  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const title = String(form.get("title")); const details = String(form.get("details")); const related = relatedResolvedWork(title, details); const updates = [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }, ...(related.length ? [{ id: crypto.randomUUID(), at: now, author: "Signal Petal", text: `Related past work: ${related.map(issue => issue.title).join(", ")}. Review those resolutions before starting from zero.` }] : [])]; const issue: Issue = { id: crypto.randomUUID(), title, details, owner: titleCaseName(String(form.get("owner")).trim()) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, updatedAt: now, status: "New", outcome: "", followUpPeople: newFollowUps, relatedIssueIds: related.map(issue => issue.id), updates }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setShowCreate(false); setShowDetail(true); }
+  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const title = String(form.get("title")); const details = String(form.get("details")); const updates = [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }]; const issue: Issue = { id: crypto.randomUUID(), title, details, owner: titleCaseName(String(form.get("owner")).trim()) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, updatedAt: now, status: "New", outcome: "", followUpPeople: newFollowUps, updates }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setShowCreate(false); setShowDetail(true); }
   function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = titleCaseName(String(form.get("name") || "").trim()); const role = String(form.get("role") || "").trim(); if (name && role) { setProfile({ name, role }); if (localStorage.getItem("signal-petal-onboarding-complete") !== "true") { setOnboardingStep(0); setShowOnboarding(true); } } }
   function finishOnboarding(action?: "create" | "focus" | "check-in") { localStorage.setItem("signal-petal-onboarding-complete", "true"); setShowOnboarding(false); if (action === "create") openCreate(); else if (action === "focus") { setSection("dashboard"); setFilter("All"); } else if (action === "check-in") openDailyCheckIn(); }
   function runCommand(command: "create" | "focus" | "check-in" | "review" | "insights" | "settings") { setShowCommandPalette(false); setCommandIndex(0); if (command === "create") openCreate(); else if (command === "focus") { setSection("dashboard"); setFilter("All"); setMetricFocus("home-total"); } else if (command === "check-in") openDailyCheckIn(); else if (command === "review") setSection("review"); else if (command === "insights") setSection("metrics"); else openSettings(); }
@@ -1427,7 +1574,7 @@ export default function Home() {
 
               <article className="insight-panel mood-ribbon-card">
                 <div className="insight-panel-head"><div><p className="eyebrow">MOOD RIBBON</p><h3>Your last {diaryInsights.ribbon.length} page{diaryInsights.ribbon.length === 1 ? "" : "s"}, oldest first</h3></div><span className={`mood-tag mood-${diaryInsights.topMood.value}`}>{diaryInsights.topMood.symbol} mostly {diaryInsights.topMood.label.toLowerCase()}</span></div>
-                <div className="mood-ribbon">{diaryInsights.ribbon.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}${entry.title ? ` · ${entry.title}` : ""}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setSection("diary"); setOpenDiaryId(entry.id); }}/>)}</div>
+                <div className="mood-ribbon">{diaryInsights.ribbon.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}${entry.title ? ` · ${entry.title}` : ""}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setOpenDiaryId(entry.id); }}/>)}</div>
                 <div className="mood-mix">{diaryInsights.moodCounts.filter(mood => mood.count).map(mood => <span key={mood.value} className={`mood-tag mood-${mood.value}`}>{mood.symbol} {mood.label} · {Math.round((mood.count / diaryInsights.entries.length) * 100)}%</span>)}</div>
               </article>
 
@@ -1474,9 +1621,85 @@ export default function Home() {
               </div>
             </>}
         </div></section>}
+      {section === "metrics" && <section className="insights-2026">
+        <div className="insights-toolbar">
+          <div className="insight-section-tabs" role="tablist" aria-label="Insights sections">
+            {([['work','Work signals'],['memory','Operational memory'],['rhythm','Personal rhythm']] as const).map(([value,label]) => <button key={value} type="button" role="tab" aria-selected={insightSection === value} className={insightSection === value ? "is-selected" : ""} onClick={() => { setInsightSection(value); setInsightDrilldown(""); }}>{label}</button>)}
+          </div>
+          {insightSection === "work" && <div className="insight-range" aria-label="Insight time range">{([['7','7 days'],['30','30 days'],['90','90 days'],['all','All time']] as const).map(([value,label]) => <button key={value} type="button" aria-pressed={insightRange === value} className={insightRange === value ? "is-selected" : ""} onClick={() => { setInsightRange(value); setInsightDrilldown(""); }}>{label}</button>)}</div>}
+        </div>
+
+        {insightSection === "work" && <>
+          <article className={`signal-headline ${overdueCount ? "watch" : "healthy"}`}>
+            <div><p className="eyebrow">THE SIGNAL WORTH ACTING ON</p><h2>{insightHeadline}</h2><p>{insightHeadlineCopy}</p></div>
+            <button type="button" onClick={() => overdueCount ? openInsightQueue("overdue") : missingEtaIssues.length ? openInsightQueue("eta") : setSection("dashboard")}>{overdueCount ? "Work the oldest →" : missingEtaIssues.length ? "Set an expectation →" : "Open the queue →"}</button>
+          </article>
+          <div className="insight-context"><span>{insightWindow.label}</span><span>{insightConfidence} · {insightSampleSize} work event{insightSampleSize === 1 ? "" : "s"}</span></div>
+          <div className="metric-row insight-metrics insight-metric-buttons">
+            <button className={`metric-card ${insightDrilldown === "completed" ? "metric-selected" : ""}`} type="button" onClick={() => setInsightDrilldown(current => current === "completed" ? "" : "completed")}><span>Completed</span><strong>{insightResolved.length}</strong><small>{insightRange === "all" ? `${resolvedIssues.length} recorded outcomes` : `${insightResolved.length - previousResolved.length >= 0 ? "+" : ""}${insightResolved.length - previousResolved.length} versus prior period`}</small></button>
+            <button className={`metric-card ${insightOnTimeRate >= 80 ? "good" : "warm"} ${insightDrilldown === "on-time" ? "metric-selected" : ""}`} type="button" onClick={() => setInsightDrilldown(current => current === "on-time" ? "" : "on-time")}><span>On-time completion</span><strong>{insightDueResolved.length ? `${insightOnTimeRate}%` : "—"}</strong><small>{insightRange === "all" || !previousDueResolved.length ? `${insightOnTimeCount} of ${insightDueResolved.length} by ETA` : `${insightOnTimeRate - previousOnTimeRate >= 0 ? "+" : ""}${insightOnTimeRate - previousOnTimeRate} points versus prior`}</small></button>
+            <button className={`metric-card ${insightDrilldown === "cycle" ? "metric-selected" : ""}`} type="button" onClick={() => setInsightDrilldown(current => current === "cycle" ? "" : "cycle")}><span>Average cycle time</span><strong>{insightCompletionHours.length ? `${insightAverageHours.toFixed(1)}h` : "—"}</strong><small>{insightRange === "all" || !previousCompletionHours.length ? "From logged to completed" : `${Math.abs(insightAverageHours - previousAverageHours).toFixed(1)}h ${insightAverageHours <= previousAverageHours ? "faster" : "slower"} than prior`}</small></button>
+            <button className={`metric-card ${overdueCount ? "warm" : "good"} ${insightDrilldown === "overdue" ? "metric-selected" : ""}`} type="button" onClick={() => setInsightDrilldown(current => current === "overdue" ? "" : "overdue")}><span>Overdue now</span><strong>{overdueCount}</strong><small>{insightRange === "all" ? "Current active queue" : `${overdueCount - previousOverdueCount >= 0 ? "+" : ""}${overdueCount - previousOverdueCount} versus prior boundary`}</small></button>
+          </div>
+          {insightDrilldown && <section className="insight-drilldown" aria-live="polite"><div><p className="eyebrow">CONTRIBUTING WORK</p><h3>{insightDrilldown === "completed" ? "Completed in this period" : insightDrilldown === "on-time" ? "Work with a tracked ETA" : insightDrilldown === "cycle" ? "Cycle-time records" : "Currently overdue"}</h3></div>{insightDrilldownIssues.length ? <div>{insightDrilldownIssues.map(issue => <button key={issue.id} type="button" onClick={() => openIssueDetail(issue.id)}><span><strong>{issue.title}</strong><small>{issue.owner} · {isCompleteStatus(issue.status) ? dateLabel(completedAtOf(issue)) : `${daysOverdue(issue)}d overdue`}</small></span><b>Open →</b></button>)}</div> : <p>No records contribute to this metric yet.</p>}</section>}
+
+          <section className="bottleneck-center">
+            <div className="memory-head"><div><p className="eyebrow">WHERE WORK WAITS</p><h2>Find the bottleneck, not the blame</h2><p>These are live queue conditions, independent of the selected reporting period.</p></div><span>{waitingIssues.length + staleIssues.length} waiting signals</span></div>
+            <div className="bottleneck-grid">
+              <button type="button" disabled={!oldestActive} onClick={() => oldestActive && openIssueDetail(oldestActive.id)}><span>Oldest active work</span><strong>{oldestActive ? `${daysSince(oldestActive.createdAt)}d` : "—"}</strong><small>{oldestActive ? clip(oldestActive.title, 54) : "The queue is empty"}</small></button>
+              <button type="button" disabled={!waitingIssues.length} onClick={() => waitingIssues[0] && openIssueDetail(waitingIssues[0].id)}><span>Waiting or blocked</span><strong>{waitingIssues.length}</strong><small>{waitingIssues.length ? "Open the oldest waiting item" : "No blocked handoffs"}</small></button>
+              <button type="button" disabled={!staleIssues.length} onClick={() => staleIssues[0] && openIssueDetail(staleIssues[0].id)}><span>No update for 3+ days</span><strong>{staleIssues.length}</strong><small>{staleIssues.length ? "Record the next movement" : "Every active item is fresh"}</small></button>
+              <button type="button" disabled={!ownerReport.length} onClick={() => { setSection("dashboard"); setFilter("All"); setMetricFocus("home-open"); }}><span>Highest active load</span><strong>{ownerReport[0]?.[1] ?? 0}</strong><small>{ownerReport[0]?.[0] ?? "No active owner"}</small></button>
+            </div>
+          </section>
+
+          <section className="insight-action-center" aria-labelledby="insight-action-title-v2"><div className="insight-action-head"><div><p className="eyebrow">ACT ON THE SIGNAL</p><h2 id="insight-action-title-v2">Turn the gaps into next moves</h2><p>Each action opens the exact queue or record that needs attention.</p></div><span>{overdueCount + missingEtaIssues.length + missingOutcomeIssues.length} open recommendation{overdueCount + missingEtaIssues.length + missingOutcomeIssues.length === 1 ? "" : "s"}</span></div><div className="insight-action-list"><article className={overdueCount ? "needs-action" : "is-complete"}><span className="insight-action-mark">{overdueCount ? "!" : "✓"}</span><div><strong>Recover overdue work</strong><p>{overdueCount ? `${overdueCount} active item${overdueCount === 1 ? " is" : "s are"} past the expected update.` : "No active work is overdue."}</p></div>{overdueCount > 0 && <button type="button" onClick={() => openInsightQueue("overdue")}>Work the queue →</button>}</article><article className={missingEtaIssues.length ? "needs-action" : "is-complete"}><span className="insight-action-mark">{missingEtaIssues.length ? "◷" : "✓"}</span><div><strong>Set missing expectations</strong><p>{missingEtaIssues.length ? `${missingEtaIssues.length} active item${missingEtaIssues.length === 1 ? " has" : "s have"} no ETA.` : "Every active item has an expected update."}</p></div>{missingEtaIssues.length > 0 && <button type="button" onClick={() => openInsightQueue("eta")}>Set the first ETA →</button>}</article><article className={missingOutcomeIssues.length ? "needs-action" : "is-complete"}><span className="insight-action-mark">{missingOutcomeIssues.length ? "✎" : "✓"}</span><div><strong>Preserve the outcome</strong><p>{missingOutcomeIssues.length ? `${missingOutcomeIssues.length} completed item${missingOutcomeIssues.length === 1 ? " is" : "s are"} missing the result or learning.` : "Every completed item has an outcome."}</p></div>{missingOutcomeIssues.length > 0 && <button type="button" onClick={() => openInsightQueue("outcome")}>Capture the first outcome →</button>}</article></div></section>
+        </>}
+
+        {insightSection === "work" && shippedWall.length > 0 && <section className="insight-panel shipped-wall">
+          <div className="insight-panel-head"><div><p className="eyebrow">THE SHIPPED WALL</p><h3>What you actually delivered</h3></div><span className="wall-count">{shippedWall.length} with an outcome</span></div>
+          <p className="insight-note wall-note">Closed work where you wrote down what changed. This is the answer to &ldquo;what have you been doing?&rdquo; — in your own words, not a counter.</p>
+          <div className="wall-grid">{shippedWall.map(issue => <button key={issue.id} type="button" className="wall-card" onClick={() => { setActiveId(issue.id); setShowDetail(true); }}>
+            <strong>{issue.title}</strong>
+            <p>{issue.outcome}</p>
+            <small>{dateLabel(completedAtOf(issue))}</small>
+          </button>)}</div>
+        </section>}
+
+        {insightSection === "memory" && <section className="memory-center memory-center-focused"><div className="memory-head"><div><p className="eyebrow">OPERATIONAL MEMORY</p><h2>Keep the fix, not just the closure</h2><p>Previews hide links, addresses, and oversized pasted content until you open the record.</p></div><span>{resolvedIssues.length - incompleteMemories.length}/{resolvedIssues.length} complete</span></div>{resolvedIssues.length ? <div className="memory-list">{resolvedIssues.map(issue => { const raw = issue.memory?.resolution || issue.outcome || "The resolution has not been captured yet."; return <article key={issue.id}><div><strong>{issue.title}</strong><p>{safeMemoryPreview(raw)}</p></div><button type="button" onClick={() => setMemoryIssueId(issue.id)}>{issue.memory?.resolution && issue.memory?.learning ? "Review" : "Capture"} →</button></article>; })}</div> : <p className="memory-empty">Resolve an issue and its operational memory card will appear here.</p>}</section>}
+
+        {insightSection === "rhythm" && <section className="diary-insights diary-insights-focused">
+          <div className="diary-insights-head"><div><p className="eyebrow">FROM YOUR DIARY</p><h2>Personal rhythm, on your terms<Petal className="title-petal" size={19}/></h2><p>Private, on-device patterns. Turn off any signal you do not want reflected here.</p></div>{diaryInsights && <button className="secondary" type="button" onClick={() => setSection("diary")}>Open the diary</button>}</div>
+          <div className="privacy-controls" aria-label="Diary insight privacy controls">{([['mood','Mood patterns'],['themes','Recurring themes'],['words','Repeated words']] as const).map(([key,label]) => <button key={key} type="button" aria-pressed={diaryInsightPrefs[key]} className={diaryInsightPrefs[key] ? "is-on" : ""} onClick={() => setDiaryInsightPrefs(current => ({ ...current, [key]: !current[key] }))}><span>{diaryInsightPrefs[key] ? "✓" : ""}</span>{label}</button>)}</div>
+          {diaryLocked ? <div className="diary-insights-empty"><span><Petal size={26}/></span><h3>Your diary is locked.</h3><p>Unlock it on the Diary page and these patterns come back with it.</p></div> : !diaryInsights ? <div className="diary-insights-empty"><span>✎</span><h3>Nothing to read yet.</h3><p>Write a few reflections and this fills up gently.</p></div> : <>
+            <div className="insight-context"><span>{diaryInsights.entries.length < 8 || diaryInsights.daysWritten < 4 ? "Early pattern" : "Established pattern"}</span><span>{diaryInsights.entries.length} reflections across {diaryInsights.daysWritten} day{diaryInsights.daysWritten === 1 ? "" : "s"}</span></div>
+            <div className="metric-row insight-metrics"><article><span>Reflections</span><strong>{diaryInsights.entries.length}</strong><small>Private pages on this device</small></article><article className={diaryInsights.currentStreak > 1 ? "good" : ""}><span>Writing streak</span><strong>{diaryInsights.currentStreak || "—"}</strong><small>Best run: {diaryInsights.longestStreak} day{diaryInsights.longestStreak === 1 ? "" : "s"}</small></article><article><span>Words written</span><strong>{diaryInsights.totalWords.toLocaleString()}</strong><small>{diaryInsights.averageWords} per page</small></article><article><span>Pages revisited</span><strong>{diaryInsights.revisited}</strong><small>Reflections you returned to</small></article></div>
+            {diaryInsightPrefs.mood && <article className="insight-panel mood-ribbon-card"><div className="insight-panel-head"><div><p className="eyebrow">MOOD RIBBON</p><h3>Your last {diaryInsights.ribbon.length} pages</h3></div><span className={`mood-tag mood-${diaryInsights.topMood.value}`}>{diaryInsights.topMood.symbol} mostly {diaryInsights.topMood.label.toLowerCase()}</span></div><div className="mood-ribbon">{diaryInsights.ribbon.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setOpenDiaryId(entry.id); }}/>)}</div></article>}
+            {diaryInsightPrefs.mood && pixels && <article className="insight-panel year-card">
+              <div className="insight-panel-head">
+                <div><p className="eyebrow">A YEAR IN PIXELS</p><h3>{pixelsWritten} day{pixelsWritten === 1 ? "" : "s"} written in {shownYear}</h3></div>
+                {diaryYears.length > 1 && <div className="year-switch">{diaryYears.map(year => <button key={year} type="button" className={year === shownYear ? "is-selected" : ""} aria-pressed={year === shownYear} onClick={() => setPixelYear(year)}>{year}</button>)}</div>}
+              </div>
+              <div className="year-grid" role="img" aria-label={`Mood for each day of ${shownYear}. ${pixelsWritten} days written.`}>
+                {pixels.map(row => <div className="year-row" key={row.month}>
+                  <span className="year-month">{row.label}</span>
+                  <div className="year-days">{row.days.map(day => day.entry
+                    ? <button key={day.key} type="button" className={`year-pixel mood-${day.entry.mood} ${day.isToday ? "is-today" : ""}`} title={`${moodName(day.entry.mood)} · ${dateLabel(day.entry.at)}${day.entry.title ? ` · ${day.entry.title}` : ""}`} aria-label={`${moodName(day.entry.mood)} on ${dateLabel(day.entry.at)}`} onClick={() => { setOpenDiaryId(day.entry!.id); }}/>
+                    : <span key={day.key} className={`year-pixel is-blank ${day.isToday ? "is-today" : ""} ${day.isFuture ? "is-future" : ""}`} aria-hidden="true"/>)}</div>
+                </div>)}
+              </div>
+              <p className="insight-note">{pixelsWritten === 0 ? `Nothing written in ${shownYear} yet — each square fills in as you write.` : `Every square is a day. The gaps are days too — this is a record, not a scorecard.`}</p>
+            </article>}
+            <div className="insight-detail">
+              {diaryInsightPrefs.themes && <article className="insight-panel"><p className="eyebrow">RECURRING THREADS</p><h3>What may be repeating</h3>{diaryInsights.themes.length ? <ul className="theme-bars">{diaryInsights.themes.map(theme => <li key={theme.label}><span className="theme-name">{theme.label}</span><span className="theme-track"><span style={{ width: `${Math.max(10, Math.round((theme.count / diaryInsights.entries.length) * 100))}%` }}/></span><em>{theme.count}</em></li>)}</ul> : <p>No thread has repeated yet.</p>}<p className="insight-note">{diaryInsights.entries.length < 8 || diaryInsights.daysWritten < 4 ? "This is an early observation, not a conclusion. A few more days of writing will make it more reliable." : "These are repeated themes in your own words, offered as prompts rather than conclusions."}</p></article>}
+              {diaryInsightPrefs.words && <article className="insight-panel"><p className="eyebrow">REPEATED WORDS</p><h3>Language you return to</h3>{diaryInsights.words.length ? <div className="word-cloud">{diaryInsights.words.map(([word,count],index) => <span key={word} className="word-chip" style={{ fontSize: `${Math.round(20 - index * 1.2)}px` }} title={`${count} times`}>{word}</span>)}</div> : <p>No word has repeated enough to show yet.</p>}<p className="insight-note">Hidden by default because individual words can lose their meaning outside the page they came from.</p></article>}
+            </div>
+          </>}
+        </section>}
+      </section>}
       {section === "diary" && diaryLocked && <section className="diary-section"><div className="lock-screen"><span className="lock-mark"><Petal size={37}/></span><p className="eyebrow">LOCKED</p><h2>Your diary is closed.</h2><p>Enter the passphrase you set. It is not stored anywhere, so nobody — including this app — can open these pages without it.</p><form onSubmit={unlockDiary}><label>Passphrase<input type="password" autoComplete="current-password" value={lockPass} onChange={event => setLockPass(event.target.value)} required/></label><button className="primary" type="submit" disabled={lockBusy}>{lockBusy ? "Opening…" : "Unlock"}</button></form>{lockMessage && <p className="lock-message" role="status">{lockMessage}</p>}</div></section>}
       {section === "diary" && !diaryLocked && <section className="diary-section" style={diarySkin}><div className="diary-grid"><form className={`diary-composer paper-${diaryPaper}`} onSubmit={addDiaryEntry}><div><p className="eyebrow">TODAY&apos;S CHECK-IN</p><h2>What needs room today?</h2><p className="diary-copy">Write it exactly as it feels. This entry stays in this browser.</p></div><div className={`streak-banner ${diaryInsights?.currentStreak ? "" : "is-cold"}`}><span className="streak-flame" aria-hidden="true">{diaryInsights?.currentStreak ? <Petal size={20}/> : "✎"}</span><div><strong>{!diaryInsights ? "Your first page." : !diaryInsights.currentStreak ? "No run going." : diaryInsights.currentStreak === 1 ? "Day one." : `${diaryInsights.currentStreak} days running.`}</strong><small>{!diaryInsights ? "Write once and the streak starts at one." : !diaryInsights.currentStreak ? `Your longest was ${diaryInsights.longestStreak} day${diaryInsights.longestStreak === 1 ? "" : "s"}. Today can start the next one.` : wroteToday ? `Today is already on the page.${diaryInsights.currentStreak >= diaryInsights.longestStreak ? " This is your longest run yet." : ` Your best is ${diaryInsights.longestStreak} days.`}` : `Write today to keep it going.${diaryInsights.currentStreak >= diaryInsights.longestStreak ? " One more makes it your longest run." : ` Your best is ${diaryInsights.longestStreak} days.`}`}</small></div></div><fieldset className="mood-picker"><legend>How are you feeling?</legend>{moods.map(mood => <button key={mood.value} className={diaryMood === mood.value ? "mood-selected" : ""} type="button" aria-pressed={diaryMood === mood.value} onClick={() => setDiaryMood(mood.value)}><span>{mood.symbol}</span><small>{mood.label}</small></button>)}</fieldset><label>Give this moment a name <small>optional</small><input value={diaryTitle} onChange={event => setDiaryTitle(event.target.value)} placeholder="A short title…"/></label><div className="diary-prompt"><span>{writingPrompts[promptIndex]}</span><button type="button" onClick={() => setPromptIndex(index => (index + 1) % writingPrompts.length)} aria-label="Show another prompt">Another</button></div><label>Let it out<textarea className="diary-ruled" required value={diaryText} onChange={event => setDiaryText(event.target.value)} placeholder="What happened? What are you carrying? What do you wish you could say?"/></label>{linkableIssues.length > 0 && <div className="link-picker"><span>Is this about a task? <small>optional</small></span><div className="link-options">{linkableIssues.map(issue => <button key={issue.id} type="button" className={diaryLinks.includes(issue.id) ? "is-linked" : ""} aria-pressed={diaryLinks.includes(issue.id)} onClick={() => setDiaryLinks(current => current.includes(issue.id) ? current.filter(id => id !== issue.id) : [...current, issue.id])}>{issue.title}</button>)}</div></div>}<div className="diary-save"><span>Private on this device</span><button className="primary" type="submit">Save reflection</button></div></form><aside className="diary-companion"><span className="companion-mark"><Petal size={32}/></span><p className="eyebrow">GENTLE NEXT STEP</p><h2>{diaryInsight ? "A thought for right now" : "Your private pause"}</h2><p>{diaryInsight || "After you save a reflection, Signal Petal will offer one small suggestion shaped by your mood and words."}</p><div className="diary-stats"><div><strong>{diaryEntries.length}</strong><span>Total entries</span></div><div><strong>{diaryEntries.filter(entry => Date.now() - new Date(entry.at).getTime() < 604800000).length}</strong><span>Last 7 days</span></div><div><strong className="stat-best">{diaryInsights?.longestStreak ?? 0}</strong><span>Longest run</span></div></div>{lookBack && <button className="look-back" type="button" onClick={() => setOpenDiaryId(lookBack.entry.id)}><span className="eyebrow">{lookBack.label.toUpperCase()}</span><strong>{lookBack.entry.title || "Untitled reflection"}</strong><small>{moodName(lookBack.entry.mood)} · {dateLabel(lookBack.entry.at)}</small></button>}<small className="privacy-note">Suggestions are generated on this device. They are supportive prompts, not professional care.</small></aside></div><section className="diary-history"><div className="diary-history-heading"><div><p className="eyebrow">YOUR REFLECTIONS</p><h2>Recent entries</h2></div>{lockOn && <button className="secondary lock-now" type="button" onClick={lockDiaryNow}>Lock the diary</button>}<span>{diaryNeedle || diaryMoodFilter ? `${visibleDiary.length} of ${diaryEntries.length}` : `${diaryEntries.length} saved`}</span></div>
-        <div className="diary-filters"><input type="search" value={diaryQuery} onChange={event => setDiaryQuery(event.target.value)} placeholder="Search your reflections…" aria-label="Search reflections"/><div className="mood-filter">{moods.map(option => <button key={option.value} type="button" className={`mood-tag mood-${option.value} ${diaryMoodFilter === option.value ? "is-chosen" : ""}`} aria-pressed={diaryMoodFilter === option.value} onClick={() => setDiaryMoodFilter(current => current === option.value ? "" : option.value)}>{option.symbol} {option.label}</button>)}{(diaryNeedle || diaryMoodFilter) && <button type="button" className="clear-filters" onClick={() => { setDiaryQuery(""); setDiaryMoodFilter(""); }}>Clear</button>}</div></div><div className="diary-entry-list">{visibleDiary.map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <article className={`diary-entry diary-page paper-${diaryPaper}`} key={entry.id}><button className="diary-page-open" type="button" onClick={() => { setOpenDiaryId(entry.id); setEditingDiaryId(""); }}><span className="diary-entry-top"><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><time>{dateLabel(entry.at)}{entry.updatedAt ? ` · edited ${dateLabel(entry.updatedAt)}` : ""}</time></span><span className="diary-page-title">{entry.title || "Untitled reflection"}</span><span className="diary-ruled diary-page-body">{entry.text}</span><span className="diary-page-more">Open page →</span></button></article>; })}{!visibleDiary.length && <div className="diary-empty"><span>✎</span><h3>{diaryEntries.length ? "Nothing matches that." : "Your diary is ready."}</h3><p>{diaryEntries.length ? "Try a different word, or clear the filters to see every page." : "Your first reflection will appear here with its mood and gentle next step."}</p></div>}</div></section></section>}
+        <div className="diary-filters"><input type="search" value={diaryQuery} onChange={event => setDiaryQuery(event.target.value)} placeholder="Search your reflections…" aria-label="Search reflections"/><div className="mood-filter">{moods.map(option => <button key={option.value} type="button" className={`mood-tag mood-${option.value} ${diaryMoodFilter === option.value ? "is-chosen" : ""}`} aria-pressed={diaryMoodFilter === option.value} onClick={() => setDiaryMoodFilter(current => current === option.value ? "" : option.value)}>{option.symbol} {option.label}</button>)}{(diaryNeedle || diaryMoodFilter) && <button type="button" className="clear-filters" onClick={() => { setDiaryQuery(""); setDiaryMoodFilter(""); }}>Clear</button>}</div></div><div className="diary-entry-list">{visibleDiary.map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <article className={`diary-entry diary-page paper-${diaryPaper}`} key={entry.id}><button className="diary-page-open" type="button" onClick={() => { setOpenDiaryId(entry.id); setEditingDiaryId(""); }}><span className="diary-entry-top"><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><time>{dateLabel(entry.at)}{entry.updatedAt ? ` · edited ${dateLabel(entry.updatedAt)}` : ""}</time></span><span className="diary-page-title"><em className="page-number">Page {pageNumbers.get(entry.id) ?? 1}</em>{entry.title || "Untitled reflection"}</span><span className="diary-ruled diary-page-body">{entry.text}</span><span className="diary-page-more">Open page →</span></button></article>; })}{!visibleDiary.length && <div className="diary-empty"><span>✎</span><h3>{diaryEntries.length ? "Nothing matches that." : "Your diary is ready."}</h3><p>{diaryEntries.length ? "Try a different word, or clear the filters to see every page." : "Your first reflection will appear here with its mood and gentle next step."}</p></div>}</div></section></section>}
       {section === "review" && reviewWeek && review && <section className="review-page">
         <div className="review-toolbar">
           <div className={`review-nav ${review.isRecent ? "is-recent" : ""}`}>{!review.isRecent && <button type="button" aria-label="Previous week" onClick={() => setReviewWeek(week => addDays(week ?? new Date(), -7))}>‹</button>}<div><strong>{review.isRecent ? "Recent 7 days" : weekLabel(reviewWeek)}</strong><small>{review.isRecent ? weekLabel(new Date(review.from)) : review.isThisWeek ? "This week so far" : "A finished week"}</small></div>{!review.isRecent && <button type="button" aria-label="Next week" disabled={review.isThisWeek} onClick={() => setReviewWeek(week => addDays(week ?? new Date(), 7))}>›</button>}</div>
@@ -1517,7 +1740,7 @@ export default function Home() {
           <div className="review-card-head"><p className="eyebrow">HOW THE WEEK FELT</p><strong>{review.pages.length} page{review.pages.length === 1 ? "" : "s"}</strong></div>
           {review.pages.length
             ? <>
-              <div className="mood-ribbon">{review.pages.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setSection("diary"); setOpenDiaryId(entry.id); }}/>)}</div>
+              <div className="mood-ribbon">{review.pages.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setOpenDiaryId(entry.id); }}/>)}</div>
               <p className="review-feel-note">{review.feel === null ? "" : review.feel >= 1 ? "A good week on the page — mostly bright and calm." : review.feel > 0 ? "More light than heavy across the week." : review.feel === 0 ? "An even week: some lift, some weight." : review.feel > -0.6 ? "The week leaned heavy. Worth reading back before planning the next one." : "A hard week by your own account. Whatever you plan next, plan it for the person who wrote those pages."}</p>
               {review.owed.length > 0 && <div className="review-owed"><p className="eyebrow">IN YOUR OWN WORDS</p>{review.owed.map(line => <blockquote key={line}>“{line}.”</blockquote>)}</div>}
             </>
@@ -1575,7 +1798,7 @@ export default function Home() {
         </article>
       </section>}
     </section>
-    {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onChange={onOwnerInput} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => onNameInput(e, setFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div>{!diaryLocked && diaryEntries.some(entry => (entry.issueIds ?? []).includes(active.id)) && <div className="issue-reflections"><div className="issue-reflections-head"><p className="eyebrow">FROM YOUR DIARY</p><small>Only you can see this.</small></div>{diaryEntries.filter(entry => (entry.issueIds ?? []).includes(active.id)).map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <button key={entry.id} type="button" onClick={() => { setShowDetail(false); setSection("diary"); setOpenDiaryId(entry.id); }}><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><strong>{entry.title || "Untitled reflection"}</strong><small>{dateLabel(entry.at)}</small></button>; })}</div>}<div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={() => setShowDetail(false)}>Save changes</button></div></section></div>}
+    {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onChange={onOwnerInput} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => onNameInput(e, setFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div>{!diaryLocked && diaryEntries.some(entry => (entry.issueIds ?? []).includes(active.id)) && <div className="issue-reflections"><div className="issue-reflections-head"><p className="eyebrow">FROM YOUR DIARY</p><small>Only you can see this.</small></div>{diaryEntries.filter(entry => (entry.issueIds ?? []).includes(active.id)).map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <button key={entry.id} type="button" onClick={() => { setShowDetail(false); setOpenDiaryId(entry.id); }}><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><strong>{entry.title || "Untitled reflection"}</strong><small>{dateLabel(entry.at)}</small></button>; })}</div>}<div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={() => setShowDetail(false)}>Save changes</button></div></section></div>}
     {openEntry && (() => {
       const mood = moods.find(item => item.value === openEntry.mood) || moods[2];
       const drafting = editingDiaryId === openEntry.id;
@@ -1585,13 +1808,30 @@ export default function Home() {
       return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }} style={diarySkin}>
         <section className={`diary-open paper-${diaryPaper}`} role="dialog" aria-modal="true" aria-labelledby="diary-open-title">
           <button className="close" type="button" aria-label="Close this page" onClick={close}>×</button>
-          <div className="diary-open-head"><span className={`mood-tag mood-${drafting ? editDraft.mood : openEntry.mood}`}>{(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).symbol} {(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).label}</span><time>{dateLabel(openEntry.at)}{openEntry.updatedAt ? ` · edited ${dateLabel(openEntry.updatedAt)}` : ""}</time></div>
+          <div className="diary-open-head"><em className="page-number">Page {pageNumbers.get(openEntry.id) ?? 1}</em><span className={`mood-tag mood-${drafting ? editDraft.mood : openEntry.mood}`}>{(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).symbol} {(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).label}</span><time>{dateLabel(openEntry.at)}{openEntry.updatedAt ? ` · edited ${dateLabel(openEntry.updatedAt)}` : ""}</time></div>
           {drafting
             ? <form className="diary-entry-edit" onSubmit={event => saveDiaryEdit(event, openEntry, openEntryIndex)}><fieldset className="mood-picker mood-picker-compact"><legend>Mood</legend>{moods.map(option => <button key={option.value} className={editDraft.mood === option.value ? "mood-selected" : ""} type="button" aria-pressed={editDraft.mood === option.value} onClick={() => setEditDraft(draft => ({ ...draft, mood: option.value }))}><span>{option.symbol}</span><small>{option.label}</small></button>)}</fieldset><label>Title <small>optional</small><input value={editDraft.title} onChange={event => setEditDraft(draft => ({ ...draft, title: event.target.value }))} placeholder="A short title…"/></label><div className="link-picker"><span>Linked tasks</span><div className="link-options">{linkableIssues.map(issue => <button key={issue.id} type="button" className={editDraft.issueIds.includes(issue.id) ? "is-linked" : ""} aria-pressed={editDraft.issueIds.includes(issue.id)} onClick={() => setEditDraft(draft => ({ ...draft, issueIds: draft.issueIds.includes(issue.id) ? draft.issueIds.filter(id => id !== issue.id) : [...draft.issueIds, issue.id] }))}>{issue.title}</button>)}</div></div><label>Reflection<textarea className="diary-ruled" required value={editDraft.text} onChange={event => setEditDraft(draft => ({ ...draft, text: event.target.value }))}/></label><div className="diary-entry-actions"><button className="primary" type="submit">Save changes</button><button className="secondary" type="button" onClick={cancelDiaryEdit}>Cancel</button></div></form>
             : <><h2 id="diary-open-title" className="diary-open-title">{openEntry.title || "Untitled reflection"}</h2><div className="diary-ruled diary-open-body">{openEntry.text}</div>{(openEntry.issueIds ?? []).length > 0 && <div className="entry-links"><span>About</span><div>{(openEntry.issueIds ?? []).map(id => { const issue = issues.find(item => item.id === id); return issue ? <button key={id} type="button" onClick={() => { setOpenDiaryId(""); setActiveId(id); setShowDetail(true); }}>{issue.title}</button> : null; })}</div></div>}<div className="entry-suggestion"><span>Try this</span><p>{suggestion}</p></div>{trail.length > 0 && <ul className="entry-trail">{trail.map(event => <li key={event.id}><strong>{diaryEventLabel(event.action)}</strong> {dateLabel(event.at)} <span>{event.detail}</span></li>)}</ul>}<div className="diary-entry-actions"><button type="button" onClick={() => startDiaryEdit(openEntry)}>Edit</button><button type="button" className="entry-delete" onClick={() => setConfirmDiaryDelete(openEntry.id)}>Delete</button></div></>}
         </section>
       </div>;
     })()}
+    {showDailyCheckIn && <div className="modal-backdrop daily-check-in-v2-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowDailyCheckIn(false); }}>
+      <form className="daily-check-in-modal-v2" onSubmit={saveDailyCheckIn} role="dialog" aria-modal="true" aria-labelledby="daily-check-in-title-v2">
+        <button className="close" type="button" aria-label="Close daily check-in" onClick={() => setShowDailyCheckIn(false)}>×</button>
+        {checkInStep < 3 && <><div className="check-in-heading"><p className="eyebrow">TWO-MINUTE WRAP-UP</p><h2 id="daily-check-in-title-v2">{["Review today","Make the boundary","Set up tomorrow"][checkInStep]}</h2><p>{["Start with what changed, then plan with the capacity you actually have.","Choose only what can genuinely wait and give it a date to return.","Leave one clear first move so tomorrow starts without rereading the whole queue."][checkInStep]}</p></div><div className="check-in-steps" aria-label={`Step ${checkInStep + 1} of 3`}>{[0,1,2].map(step => <span key={step} className={step <= checkInStep ? "is-active" : ""}><b>{step + 1}</b>{["Review","Decide","Tomorrow"][step]}</span>)}</div></>}
+
+        {checkInStep === 0 && <div className="check-in-stage"><div className="check-in-facts"><div><strong>{completedToday.length}</strong><span>completed today</span></div><div className={overdueCount ? "needs-care" : ""}><strong>{overdueCount}</strong><span>currently overdue</span></div><div><strong>{openCount}</strong><span>still open</span></div></div>{previousCheckIn && <div className="check-in-change"><span>Since your last brief</span><strong>{completedToday.length ? `${completedToday.length} loop${completedToday.length === 1 ? "" : "s"} closed today` : "The queue is still waiting for movement"}</strong><small>Last capacity: {previousCheckIn.capacity === "high" ? "strong" : previousCheckIn.capacity === "low" ? "limited" : "steady"}</small></div>}<fieldset className="capacity-picker"><legend>What capacity are you planning with?</legend><p>Private in Signal Petal and never included in copied work summaries.</p><div>{([['high','Strong','Room for demanding work'],['steady','Steady','A normal, focused load'],['low','Limited','Protect the essentials']] as const).map(([value,label,copy]) => <button key={value} type="button" className={checkInCapacity === value ? "is-selected" : ""} aria-pressed={checkInCapacity === value} onClick={() => setCheckInCapacity(value)}><strong>{label}</strong><small>{copy}</small></button>)}</div></fieldset></div>}
+
+        {checkInStep === 1 && <div className="check-in-stage">{parkableIssues.length ? <fieldset className="park-picker-v2"><legend>What can intentionally wait?</legend><p>The most urgent work is shown first. Selected items return on one shared date, which updates their expected time and keeps Insights honest.</p><div>{parkableIssues.slice(0, checkInShowAll ? parkableIssues.length : 5).map(issue => <label key={issue.id}><input type="checkbox" checked={checkInParked.includes(issue.id)} onChange={() => setCheckInParked(ids => ids.includes(issue.id) ? ids.filter(id => id !== issue.id) : [...ids, issue.id])}/><span><strong>{issue.title}</strong><small>{isOverdue(issue) ? `${daysOverdue(issue)}d overdue` : issue.expected ? dateLabel(issue.expected) : "No expectation set"} · {issue.owner}</small></span></label>)}</div>{parkableIssues.length > 5 && <button className="show-all-work" type="button" onClick={() => setCheckInShowAll(value => !value)}>{checkInShowAll ? "Show the priority five" : `Show all ${parkableIssues.length} active items`}</button>}</fieldset> : <div className="check-in-clear"><Petal size={30}/><strong>The queue is clear.</strong><p>There is nothing to defer tonight.</p></div>}{checkInParked.length > 0 && <label className="resume-field">Bring these back on<input type="datetime-local" min={checkInResumeMinimum} value={checkInResumeAt} onChange={event => setCheckInResumeAt(event.target.value)} required/><small>This becomes the new expected update for {checkInParked.length} selected item{checkInParked.length === 1 ? "" : "s"}.</small></label>}</div>}
+
+        {checkInStep === 2 && <div className="check-in-stage tomorrow-stage"><label>Today’s win <small>optional</small><input value={checkInWin} onChange={event => setCheckInWin(event.target.value)} placeholder="What moved or became clearer?"/></label><label>Tomorrow’s first move <small>recommended</small><textarea value={checkInTomorrowMove} onChange={event => setCheckInTomorrowMove(event.target.value)} placeholder="The first concrete action you want waiting for you…"/></label><label>Anything else tomorrow-you should know? <small>optional</small><textarea value={checkInNote} onChange={event => setCheckInNote(event.target.value)} placeholder="A decision, constraint, or useful context…"/></label><div className="check-in-preview"><p className="eyebrow">YOUR BRIEF WILL CAPTURE</p><span>{completedToday.length} completed · {overdueCount} overdue · {checkInParked.length} deferred · {checkInCapacity} capacity{checkInTomorrowMove.trim() ? " · first move ready" : ""}</span></div></div>}
+
+        {checkInStep === 3 && checkInSaved && <div className="check-in-receipt" role="status"><span className="receipt-mark"><Petal size={34}/></span><p className="eyebrow">DAILY BRIEF SAVED</p><h2>Tomorrow has a starting point.</h2><p>{checkInParked.length ? `${checkInParked.length} item${checkInParked.length === 1 ? " was" : "s were"} deferred to ${dateLabel(checkInResumeAt)}.` : "Nothing was pushed aside without a decision."}</p>{checkInTomorrowMove.trim() && <blockquote>{checkInTomorrowMove.trim()}</blockquote>}<div className="check-in-actions"><button className="secondary" type="button" onClick={() => { setCheckInStep(0); setCheckInSaved(false); }}>Edit brief</button><button className="primary" type="button" onClick={() => setShowDailyCheckIn(false)}>Done</button></div></div>}
+
+        {checkInStep < 3 && <div className="check-in-actions check-in-nav">{checkInStep > 0 ? <button className="secondary" type="button" onClick={() => setCheckInStep(step => step - 1)}>Back</button> : <button className="secondary" type="button" onClick={() => setShowDailyCheckIn(false)}>Cancel</button>}<button className="primary" type={checkInStep === 2 ? "submit" : "button"} onClick={checkInStep < 2 ? () => setCheckInStep(step => step + 1) : undefined}>{checkInStep === 2 ? todayCheckIn ? "Update daily brief" : "Save daily brief" : "Continue"}</button></div>}
+        {checkInStep < 3 && dailyCheckIns.length > 0 && <div className="check-in-history-toggle"><button type="button" onClick={() => setShowCheckInHistory(value => !value)}>{showCheckInHistory ? "Hide previous briefs" : "View previous briefs"}</button>{showCheckInHistory && <div className="check-in-history">{dailyCheckIns.slice(0,3).map(checkIn => <article key={checkIn.id}><time>{dateLabel(checkIn.at)}</time><p>{clip(checkIn.brief, 220)}</p></article>)}</div>}</div>}
+      </form>
+    </div>}
     {showCommandPalette && <div className="modal-backdrop command-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowCommandPalette(false); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><div className="command-search"><span>⌕</span><input autoFocus value={commandQuery} onChange={event => { setCommandQuery(event.target.value); setCommandIndex(0); }} onKeyDown={walkCommands} placeholder="Search commands, tasks, or reflections…" aria-label="Search commands"/><kbd>Esc</kbd></div><div className="command-results">{commandItems.map((item, index) => <Fragment key={item.key}>{(index === 0 || commandItems[index - 1].group !== item.group) && <p>{item.group}</p>}<button type="button" className={index === commandCursor ? "is-active" : ""} ref={node => { if (index === commandCursor) node?.scrollIntoView({ block: "nearest" }); }} onMouseEnter={() => setCommandIndex(index)} onClick={item.run}><span className={item.group === "REFLECTIONS" ? "command-mood" : ""}>{item.icon}</span><strong>{item.label}</strong>{item.group === "QUICK ACTIONS" ? <kbd>{item.hint}</kbd> : <small>{item.hint}</small>}</button></Fragment>)}{!commandItems.length && <div className="command-empty">No command, task, or reflection matches “{commandQuery}”.</div>}</div><footer><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span>Shortcut <kbd>⌘ K</kbd> or <kbd>/</kbd></span></footer></section></div>}
     {showOnboarding && profile && <div className="modal-backdrop onboarding-backdrop" role="presentation"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><button className="onboarding-skip" type="button" onClick={() => finishOnboarding()}>Skip for now</button><span className="profile-mark"><Petal size={31}/></span><p className="eyebrow">YOUR FIRST SIGNAL LOOP</p><h2 id="onboarding-title">{["Capture what needs attention","Give the work a next move","Let Focus now rank the queue","Close the day deliberately"][onboardingStep]}</h2><p>{["Start with one real issue, handoff, task, or risk you are carrying.","An owner, current action, and expected update turn a note into something the app can protect.","Overdue work, missing ETAs, and unclear actions rise automatically—with reversible actions beside them.","The daily check-in records movement, what can wait, and the capacity tomorrow’s plan should respect."][onboardingStep]}</p><div className="onboarding-visual"><span>{onboardingStep + 1}</span><div><strong>{["Log a signal","Name the next move","Work the ranked queue","Save the daily brief"][onboardingStep]}</strong><small>{["Title · context · owner","Action · ETA · follow-up people","Follow up · reschedule · handle","Movement · boundaries · capacity"][onboardingStep]}</small></div></div><div className="onboarding-dots">{[0,1,2,3].map(step => <button key={step} type="button" className={step === onboardingStep ? "is-current" : ""} aria-label={`Onboarding step ${step + 1}`} onClick={() => setOnboardingStep(step)}/>)}</div><div className="onboarding-actions">{onboardingStep > 0 && <button className="secondary" type="button" onClick={() => setOnboardingStep(step => step - 1)}>Back</button>}{onboardingStep < 3 ? <button className="primary" type="button" onClick={() => setOnboardingStep(step => step + 1)}>Next</button> : <><button className="secondary" type="button" onClick={() => finishOnboarding("check-in")}>Try the check-in</button><button className="primary" type="button" onClick={() => finishOnboarding("create")}>Log my first signal</button></>}</div></section></div>}
     {memoryIssue && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMemoryIssueId(""); }}><form className="memory-modal" onSubmit={saveOperationalMemory} role="dialog" aria-modal="true" aria-labelledby="memory-title"><button className="close" type="button" aria-label="Close operational memory" onClick={() => setMemoryIssueId("")}>×</button><p className="eyebrow">OPERATIONAL MEMORY</p><h2 id="memory-title">{memoryIssue.title}</h2><p className="memory-modal-copy">Capture enough context that the next person—or future you—can recognise and resolve this faster.</p><label>Symptoms and impact<textarea name="symptoms" defaultValue={memoryIssue.memory?.symptoms ?? memoryIssue.details} placeholder="What did users or systems experience?"/></label><label>Root cause<textarea name="rootCause" defaultValue={memoryIssue.memory?.rootCause ?? ""} placeholder="What actually produced the failure?"/></label><label>Resolution<textarea name="resolution" defaultValue={memoryIssue.memory?.resolution ?? memoryIssue.outcome} placeholder="What restored service or completed the work?" required/></label><label>Learning<textarea name="learning" defaultValue={memoryIssue.memory?.learning ?? ""} placeholder="What should be repeated, changed, or avoided next time?" required/></label><label>Follow-up actions<textarea name="followUp" defaultValue={memoryIssue.memory?.followUp ?? ""} placeholder="Monitoring, automation, documentation, or prevention work…"/></label><div className="check-in-actions"><button className="secondary" type="button" onClick={() => setMemoryIssueId("")}>Cancel</button><button className="primary" type="submit">Save operational memory</button></div></form></div>}

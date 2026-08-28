@@ -19,7 +19,17 @@ export type DiaryAction = "created" | "edited" | "deleted";
    reflection having existed — and been reworked — survives deleting the entry itself. */
 export type DiaryEvent = { id: string; entryId: string; at: string; action: DiaryAction; title: string; mood: Mood; detail: string };
 export type DiaryVault = { salt: string; iv: string; data: string };
-export type DailyCheckIn = { id: string; at: string; capacity: "high" | "steady" | "low"; note: string; parkedIssueIds: string[]; brief: string };
+export type DailyCheckIn = {
+  id: string;
+  at: string;
+  capacity: "high" | "steady" | "low";
+  note: string;
+  parkedIssueIds: string[];
+  brief: string;
+  win?: string;
+  tomorrowMove?: string;
+  resumeAt?: string;
+};
 /* Version 2 adds the profile, settings and the diary vault. Version 1 backups still
    import — the extra fields are all optional, so an old code loses nothing it had. */
 export type TransferPayload = {
@@ -61,7 +71,17 @@ export const isValidPayload = (payload: unknown): payload is TransferPayload => 
 
 /* Restoring an old backup must not produce an issue with no followUpPeople array,
    which every consumer indexes into without checking. */
-export const normaliseIssues = (issues: Issue[]) => issues.map(issue => ({ ...issue, followUpPeople: Array.isArray(issue.followUpPeople) ? issue.followUpPeople : [], focusHandledAt: typeof issue.focusHandledAt === "string" ? issue.focusHandledAt : undefined }));
+const isGeneratedRelatedWorkUpdate = (update: Entry) => update.author === "Signal Petal" && update.text.startsWith("Related past work:");
+
+export const normaliseIssues = (issues: Issue[]) => issues.map(issue => ({
+  ...issue,
+  followUpPeople: Array.isArray(issue.followUpPeople) ? issue.followUpPeople : [],
+  focusHandledAt: typeof issue.focusHandledAt === "string" ? issue.focusHandledAt : undefined,
+  /* Early versions promoted a loose keyword match into a permanent timeline entry.
+     Those entries were machine guesses rather than user-authored history, so old
+     backups and existing browser data are cleaned as they are loaded or merged. */
+  updates: Array.isArray(issue.updates) ? issue.updates.filter(update => !isGeneratedRelatedWorkUpdate(update)) : [],
+}));
 
 const newest = (...values: Array<string | undefined>) => Math.max(0, ...values.map(value => value ? Date.parse(value) || 0 : 0));
 const mergeById = <T extends { id: string }>(local: T[], incoming: T[], changedAt: (item: T) => number) => {
