@@ -428,6 +428,11 @@ main.dark-mode .mood-okay{color:#ded9e8;background:#3a3545}
 .backup-status small,.backup-restore small{display:block;margin-top:5px;color:var(--subtext);font-size:12px;line-height:1.5;max-width:56ch}
 .backup-status.never,.backup-status.stale{border-color:#e0a33f;background:color-mix(in srgb,#e0a33f 10%,transparent)}
 .backup-status.fresh{border-color:color-mix(in srgb,#3f9e6d 45%,var(--border));background:color-mix(in srgb,#3f9e6d 8%,transparent)}
+.sync-status{display:flex;align-items:flex-start;gap:12px;margin:0 0 14px;padding:14px 16px;border:1px solid var(--border);border-radius:13px;background:var(--panel-soft)}
+.sync-status strong,.sync-status small{display:block}.sync-status strong{font-size:14px}.sync-status small{margin-top:4px;color:var(--subtext);font-size:12px;line-height:1.45}.sync-dot{flex:0 0 auto;width:11px;height:11px;border-radius:50%;background:#9a8f99;box-shadow:0 0 0 4px color-mix(in srgb,#9a8f99 16%,transparent)}
+.sync-status-copy{min-width:0;flex:1}.sync-sign-in{display:inline-flex;margin-top:12px;padding:9px 14px;border-radius:9px;background:var(--primary-gradient);color:#fff;font-size:13px;font-weight:800;text-decoration:none;box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 22%,transparent)}.sync-sign-in:hover{filter:brightness(.97)}.sync-status .sync-account-help{max-width:70ch;margin-top:10px;font-size:11px}
+.sync-synced{border-color:color-mix(in srgb,#3f9e6d 45%,var(--border))}.sync-synced .sync-dot{background:#3f9e6d;box-shadow:0 0 0 4px color-mix(in srgb,#3f9e6d 16%,transparent)}.sync-syncing .sync-dot,.sync-checking .sync-dot{background:#4f79a8;animation:sync-pulse 1.25s ease-in-out infinite}.sync-offline .sync-dot,.sync-error .sync-dot{background:#d08a2e}.sync-signed-out .sync-dot{background:#9a8f99}@keyframes sync-pulse{50%{transform:scale(.72);opacity:.55}}
+.danger-zone{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:18px;padding:16px;border:1px solid color-mix(in srgb,#bd415e 42%,var(--border));border-radius:13px;background:color-mix(in srgb,#bd415e 6%,var(--panel-soft))}.danger-zone strong,.danger-zone small{display:block}.danger-zone small{max-width:65ch;margin-top:5px;color:var(--subtext);font-size:12px;line-height:1.5}.danger-zone .delete{flex:0 0 auto;padding:10px 15px;border:1px solid #bd415e;border-radius:9px;background:transparent;color:#bd415e;font-weight:800}.danger-zone .delete:hover{background:#bd415e;color:#fff}.reset-card label{display:grid;gap:7px;margin-bottom:20px;color:var(--subtext);font-size:13px;font-weight:700}.reset-card input{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--text);font-size:16px}.confirm-actions .delete:disabled{cursor:not-allowed;opacity:.45}
 .file-button{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text);font-size:13px;font-weight:750;cursor:pointer;white-space:nowrap}
 .file-button:hover{border-color:var(--accent);color:var(--accent-deep)}
 .file-button input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
@@ -813,6 +818,7 @@ main>.modal-backdrop:has(.daily-check-in-modal){display:none}
    left of centre with dead space on the right. Auto columns take however many
    buttons exist, which also survives adding or removing a section later. */
 @media (max-width:650px){
+  .danger-zone{align-items:stretch;flex-direction:column}.danger-zone .delete{width:100%}
   .sidebar nav{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}
   .sidebar nav button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 }

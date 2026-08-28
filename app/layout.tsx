@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://aesis-signal-petal.ewuresiattabra.chatgpt.site"),
   title: "Aesi's Signal Petal — SRE Work Tracker",
-  description: "A private local workspace for SRE issue tracking and follow-ups.",
+  description: "A private, cloud-synced workspace for issue tracking and follow-ups.",
   openGraph: {
     title: "Signal Petal",
     description: "Keep work moving with a focused view of issues, personal actions, and overdue follow-ups.",

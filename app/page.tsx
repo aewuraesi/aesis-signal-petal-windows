@@ -17,6 +17,7 @@ type FocusRecommendation = { issue: Issue; kind: "overdue" | "missing-eta" | "mi
 type InsightRange = "7" | "30" | "90" | "all";
 type InsightSection = "work" | "memory" | "rhythm";
 type InsightDrilldown = "completed" | "on-time" | "cycle" | "overdue" | "";
+type SyncState = "checking" | "syncing" | "synced" | "offline" | "signed-out" | "error";
 
 // Tip up, base just past the bloom centre at (112, 52); rotating it sweeps the flower.
 const GARDEN_PETAL = "M112 8C127.5 21.2 129.7 43.2 112 58C94.3 43.2 96.5 21.2 112 8Z";
@@ -539,8 +540,8 @@ const describeDelivery = (result: NotificationResult, label: string) => result.d
   : `${label} could not be delivered — ${result.reason}.`;
 
 export default function Home() {
-  const [issues, setIssues] = useState<Issue[]>(seed);
-  const [activeId, setActiveId] = useState<string>(seed[0].id);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [activeId, setActiveId] = useState("");
   const [showDetail, setShowDetail] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -630,12 +631,21 @@ export default function Home() {
   const [reminderTime, setReminderTime] = useState("16:30");
   const [reminderFeedback, setReminderFeedback] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("checking");
+  const [lastSyncedAt, setLastSyncedAt] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+  const [syncAccount, setSyncAccount] = useState<{ email: string; displayName: string } | null>(null);
+  const [showResetAccount, setShowResetAccount] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const syncRevision = useRef(0);
+  const cloudReady = useRef(false);
   // -1 until hydration, so the server and the first client render agree.
   const [nowHour, setNowHour] = useState(-1);
   const [pixelYear, setPixelYear] = useState(0);
 
   useEffect(() => {
-    let loadedIssues = seed;
+    let loadedIssues: Issue[] = [];
     const saved = localStorage.getItem("signal-petal-issues");
     if (saved) {
       try { loadedIssues = normaliseIssues(JSON.parse(saved) as Issue[]).map(i => ({ ...i, followUpPeople: i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()), createdAt: i.createdAt || i.updates?.[0]?.at || new Date().toISOString() })); setIssues(loadedIssues); }
@@ -721,6 +731,75 @@ export default function Home() {
   }, [diaryEntries, diaryLog, diaryKey, diaryLocked, lockOn, hydrated]);
   useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-diary-font", diaryFont); localStorage.setItem("signal-petal-diary-paper", diaryPaper); } }, [diaryFont, diaryPaper, hydrated]);
   useEffect(() => { if (hydrated && profile) { localStorage.setItem("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    void (async () => {
+      setSyncState("checking");
+      try {
+        const response = await fetch("/api/sync", { cache: "no-store" });
+        if (response.status === 401) { setSyncState("signed-out"); return; }
+        if (!response.ok) throw new Error("Cloud sync is unavailable.");
+        const result = await response.json() as { payload: TransferPayload | null; revision: number; updatedAt: string | null; account: { email: string; displayName: string } };
+        if (cancelled) return;
+        syncRevision.current = result.revision;
+        setSyncAccount(result.account);
+        if (result.payload && isValidPayload(result.payload)) {
+          const local = currentPayload();
+          const incomingHasLockedDiary = !!result.payload.diaryVault;
+          const localHasLockedDiary = !!local.diaryVault;
+          const safeIncoming = incomingHasLockedDiary || localHasLockedDiary
+            ? { ...result.payload, diaryEntries: local.diaryEntries, diaryLog: local.diaryLog, diaryVault: local.diaryVault }
+            : result.payload;
+          const merged = mergeTransferData(local, safeIncoming).payload;
+          setIssues(merged.issues); setStatuses(merged.statuses); setStatusColors(merged.statusColors);
+          setDiaryEntries(merged.diaryEntries ?? []); setDiaryLog(merged.diaryLog ?? []); setDailyCheckIns(merged.dailyCheckIns ?? []);
+          if (result.payload.profile) setProfile(result.payload.profile);
+          if (result.payload.settings) {
+            if (result.payload.settings.theme) setTheme(result.payload.settings.theme);
+            if (typeof result.payload.settings.darkMode === "boolean") setDarkMode(result.payload.settings.darkMode);
+            if (result.payload.settings.reminderTime) setReminderTime(result.payload.settings.reminderTime);
+            if (result.payload.settings.diaryFont) setDiaryFont(result.payload.settings.diaryFont);
+            if (result.payload.settings.diaryPaper) setDiaryPaper(result.payload.settings.diaryPaper);
+          }
+          if (incomingHasLockedDiary && !localHasLockedDiary && result.payload.diaryVault) {
+            localStorage.setItem("signal-petal-diary-vault", JSON.stringify(result.payload.diaryVault));
+            saltRef.current = result.payload.diaryVault.salt; setLockOn(true); setDiaryLocked(true);
+          }
+          setActiveId(merged.issues[0]?.id ?? "");
+        }
+        setLastSyncedAt(result.updatedAt ?? "");
+        cloudReady.current = true;
+        setSyncState(result.payload ? "synced" : "syncing");
+      } catch {
+        if (!cancelled) setSyncState(navigator.onLine ? "error" : "offline");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hydrated]);
+  useEffect(() => {
+    if (!hydrated || !cloudReady.current) return;
+    setSyncState(navigator.onLine ? "syncing" : "offline");
+    const timer = window.setTimeout(async () => {
+      if (!navigator.onLine) return setSyncState("offline");
+      try {
+        const response = await fetch("/api/sync", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: currentPayload(), revision: syncRevision.current }) });
+        if (response.status === 401) { cloudReady.current = false; return setSyncState("signed-out"); }
+        const result = await response.json() as { revision?: number; updatedAt?: string; payload?: TransferPayload };
+        if (response.status === 409 && result.payload && isValidPayload(result.payload)) {
+          syncRevision.current = result.revision ?? syncRevision.current;
+          const merged = mergeTransferData(currentPayload(), result.payload).payload;
+          setIssues(merged.issues); setStatuses(merged.statuses); setStatusColors(merged.statusColors);
+          setDiaryEntries(merged.diaryEntries ?? []); setDiaryLog(merged.diaryLog ?? []); setDailyCheckIns(merged.dailyCheckIns ?? []);
+          return setSyncState("syncing");
+        }
+        if (!response.ok) throw new Error("Sync failed");
+        syncRevision.current = result.revision ?? syncRevision.current;
+        setLastSyncedAt(result.updatedAt ?? new Date().toISOString()); setSyncState("synced"); setSyncMessage("");
+      } catch { setSyncState(navigator.onLine ? "error" : "offline"); }
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [issues, statuses, statusColors, diaryEntries, diaryLog, dailyCheckIns, profile, theme, darkMode, reminderTime, diaryFont, diaryPaper, hydrated, lockOn]);
   useEffect(() => { void notificationWorker(); }, []);
   useEffect(() => {
     const refresh = () => setNowHour(new Date().getHours());
@@ -1442,6 +1521,20 @@ export default function Home() {
       applyPayload(decodeTransfer(importCode.trim()), "that backup code");
     } catch { setTransferMessage("That backup code is not valid. Copy it again from the other Signal Petal address."); }
   }
+  async function resetAccount() {
+    if (resetConfirmation !== "RESET") return;
+    setResetBusy(true); setSyncMessage("");
+    try {
+      const response = await fetch("/api/sync", { method: "DELETE" });
+      if (!response.ok && response.status !== 401) throw new Error("Cloud reset failed");
+      Object.keys(localStorage).filter(key => key.startsWith("signal-petal-")).forEach(key => localStorage.removeItem(key));
+      location.reload();
+    } catch {
+      setResetBusy(false);
+      setSyncMessage("Nothing was cleared because the cloud account could not be reached. Check your connection and try again.");
+      setShowResetAccount(false);
+    }
+  }
   function addUpdate(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const text = String(form.get("update") || "").trim(); if (!text || !active) return; updateIssue({ updates: [...active.updates, { id: crypto.randomUUID(), at: new Date().toISOString(), author: personalOwner, text }] }); event.currentTarget.reset(); }
   function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const title = String(form.get("title")); const details = String(form.get("details")); const updates = [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }]; const issue: Issue = { id: crypto.randomUUID(), title, details, owner: titleCaseName(String(form.get("owner")).trim()) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, updatedAt: now, status: "New", outcome: "", followUpPeople: newFollowUps, updates }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setShowCreate(false); setShowDetail(true); }
   function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = titleCaseName(String(form.get("name") || "").trim()); const role = String(form.get("role") || "").trim(); if (name && role) { setProfile({ name, role }); if (localStorage.getItem("signal-petal-onboarding-complete") !== "true") { setOnboardingStep(0); setShowOnboarding(true); } } }
@@ -1786,18 +1879,21 @@ export default function Home() {
           <form className="status-add" onSubmit={addStatus}><input value={statusInput} onChange={e => { setStatusInput(e.target.value); setStatusError(""); }} placeholder="Add a new status" aria-label="New status name"/><button className="secondary" type="submit">+ Add</button></form>{statusError && <p className="status-error" role="alert">{statusError}</p>}<div className="settings-actions"><button className="primary" type="button" onClick={saveStatuses}>Save status changes</button></div>
         </article>
         <article className="settings-card settings-wide">
-          <p className="eyebrow">DEVICE-LOCAL DATA</p><h2>Export or merge all your data</h2><p className="settings-copy">Backups include tasks, updates, check-ins, workflow details, settings, and diary data. Importing merges newer records and adds anything that does not exist here.</p>
+          <p className="eyebrow">CLOUD &amp; DATA</p><h2>Sync, export, or reset your data</h2><p className="settings-copy">Your signed-in account syncs automatically across devices. This browser also keeps an offline copy, and backups remain available for independent safekeeping.</p>
+          <div className={`sync-status sync-${syncState}`} role="status" aria-live="polite"><span className="sync-dot" aria-hidden="true"/><div className="sync-status-copy"><strong>{syncState === "synced" ? "Cloud sync is on" : syncState === "syncing" ? "Syncing changes…" : syncState === "checking" ? "Checking cloud sync…" : syncState === "offline" ? "Offline — changes are saved on this device" : syncState === "signed-out" ? "Sign in to turn on cloud sync" : "Cloud sync needs attention"}</strong><small>{syncState === "synced" && lastSyncedAt ? `Signed in as ${syncAccount?.email || "your ChatGPT account"} · Last synced ${new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(lastSyncedAt))}.` : syncState === "offline" ? `Signed in${syncAccount?.email ? ` as ${syncAccount.email}` : ""}. Sync will resume automatically when the connection returns.` : syncState === "signed-out" ? "Use a ChatGPT account to securely keep the same Signal Petal data on all your devices." : syncState === "error" ? "Your local copy is safe. Reload or try again when the service is available." : "Tasks, check-ins, workflow settings, and diary data are included."}</small>{syncState === "signed-out" && <><a className="sync-sign-in" href="/signin-with-chatgpt?return_to=%2F">Sign in with ChatGPT</a><small className="sync-account-help">You can sign into ChatGPT with Google, Microsoft, Apple, or an email address such as Yahoo or iCloud. Signal Petal does not access your email, Google Drive, or iCloud files.</small></>}</div></div>
           <div className="backup-file">
             <div className={`backup-status ${backupAge === null ? "never" : backupAge >= 14 ? "stale" : "fresh"}`}>
-              <div><strong>{backupAge === null ? "No backup saved yet" : backupAge === 0 ? "Backed up today" : `Last backup ${backupAge} day${backupAge === 1 ? "" : "s"} ago`}</strong><small>{backupAge === null || backupAge >= 14 ? "Everything lives in this browser. Clearing site data for localhost deletes it — a saved file is the only copy that survives that." : "Keep saving a file every couple of weeks and nothing is at the mercy of your browser."}</small></div>
+              <div><strong>{backupAge === null ? "No backup saved yet" : backupAge === 0 ? "Backed up today" : `Last backup ${backupAge} day${backupAge === 1 ? "" : "s"} ago`}</strong><small>{backupAge === null || backupAge >= 14 ? "Cloud sync protects your account data; a downloaded backup gives you an independent copy you control." : "Keep an occasional backup file for recovery outside the synced account."}</small></div>
               <button className="primary" type="button" onClick={downloadBackup}>Save backup file</button>
             </div>
             <div className="backup-restore"><div><strong>Merge from a backup file</strong><small>Keeps local data, updates matching records with the newest version, and adds missing records.</small></div><label className="file-button">Choose a backup file<input type="file" accept="application/json,.json" onChange={restoreFromFile}/></label></div>
           </div>
           <div className="data-settings-grid"><div className="transfer-section"><div><strong>Move to another browser</strong><small>A code you can paste into Signal Petal somewhere else. For keeping a copy, use the backup file above instead.</small></div><textarea className="transfer-code" readOnly value={transferCode} aria-label="Backup code"/><button className="secondary" type="button" onClick={copyTransferCode}>Copy backup code</button></div><div className="transfer-section"><div><strong>Merge into this address</strong><small>Matching records keep the latest version; records that are not here yet are added.</small></div><textarea className="transfer-code" value={importCode} onChange={e => setImportCode(e.target.value)} placeholder="Paste a backup code here" aria-label="Backup code to import"/><div className="transfer-actions"><button className="secondary" type="button" onClick={pasteTransferCode}>Paste code</button><button className="primary" type="button" disabled={!importCode.trim()} onClick={importTransfer}>Import and merge</button></div></div></div>{transferMessage && <p className="transfer-message" role="status">{transferMessage}</p>}
+          <div className="danger-zone"><div><strong>Reset account</strong><small>Permanently deletes cloud and device data, including tasks, diary entries, check-ins, preferences, and test data. Your sign-in itself is not deleted.</small></div><button className="delete" type="button" onClick={() => { setResetConfirmation(""); setShowResetAccount(true); }}>Reset account…</button></div>{syncMessage && <p className="status-error" role="alert">{syncMessage}</p>}
         </article>
       </section>}
     </section>
+    {showResetAccount && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !resetBusy) setShowResetAccount(false); }}><section className="confirm-card reset-card" role="dialog" aria-modal="true" aria-labelledby="reset-account-title"><p className="eyebrow">PERMANENT ACTION</p><h2 id="reset-account-title">Reset this account?</h2><p>This deletes every Signal Petal record from the cloud and this device. It cannot be undone. Download a backup first if there is anything you may need.</p><label>Type <strong>RESET</strong> to continue<input autoFocus value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} autoComplete="off"/></label><div className="confirm-actions"><button className="secondary" type="button" disabled={resetBusy} onClick={() => setShowResetAccount(false)}>Cancel</button><button className="delete" type="button" disabled={resetConfirmation !== "RESET" || resetBusy} onClick={resetAccount}>{resetBusy ? "Resetting…" : "Delete all data"}</button></div></section></div>}
     {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onChange={onOwnerInput} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => onNameInput(e, setFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div>{!diaryLocked && diaryEntries.some(entry => (entry.issueIds ?? []).includes(active.id)) && <div className="issue-reflections"><div className="issue-reflections-head"><p className="eyebrow">FROM YOUR DIARY</p><small>Only you can see this.</small></div>{diaryEntries.filter(entry => (entry.issueIds ?? []).includes(active.id)).map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <button key={entry.id} type="button" onClick={() => { setShowDetail(false); setOpenDiaryId(entry.id); }}><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><strong>{entry.title || "Untitled reflection"}</strong><small>{dateLabel(entry.at)}</small></button>; })}</div>}<div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={() => setShowDetail(false)}>Save changes</button></div></section></div>}
     {openEntry && (() => {
       const mood = moods.find(item => item.value === openEntry.mood) || moods[2];

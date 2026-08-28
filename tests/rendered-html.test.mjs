@@ -21,7 +21,7 @@ test("server-renders the Signal Petal workspace", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Aesi&#x27;s Signal Petal — SRE Work Tracker<\/title>/i);
-  assert.match(html, /A private local workspace for SRE issue tracking and follow-ups\./i);
+  assert.match(html, /A private, cloud-synced workspace for issue tracking and follow-ups\./i);
   assert.match(html, /Signal Petal/);
   assert.match(html, /Dashboard/);
   assert.match(html, /Log\/Track/);
