@@ -49,7 +49,7 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   assert.match(page, /never included in copied work summaries/);
   assert.match(page, /ACT ON THE SIGNAL/);
   assert.match(page, /NEXT WEEK’S PRIORITIES/);
-  assert.match(page, /OPERATIONAL MEMORY/);
+  assert.match(page, /WHAT YOU LEARNED/);
   assert.match(page, /YOUR FIRST SIGNAL LOOP/);
   assert.match(page, /Command palette/);
   assert.match(page, /missing-eta/);
