@@ -485,6 +485,26 @@ main.dark-mode .mood-okay{color:#ded9e8;background:#3a3545}
 .review-nav strong{display:block;font-size:19px}
 .review-nav small{display:block;color:var(--subtext);font-size:12px}
 .review-actions{display:flex;gap:9px;flex-wrap:wrap}
+.lane-picker>small,.lane-field>small:empty{color:var(--subtext);font-size:11px;line-height:1.5}
+.lane-field>small{color:var(--subtext);font-size:11px;line-height:1.5}
+.lane-field .link-options{margin-top:2px}
+.create:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.4)}
+.review-copy{display:grid;gap:12px;padding:18px 20px;border:1px solid var(--border);border-radius:15px;background:var(--panel)}
+.review-copy-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.review-copy-head .eyebrow{margin:0}
+.review-copy-head h3{margin:3px 0 0;font-size:17px}
+.review-takeaway{display:flex;align-items:center;gap:8px;color:var(--subtext);font-size:12px;font-weight:700}
+.review-takeaway input{width:15px;height:15px;accent-color:var(--accent)}
+.review-copy-choices{display:flex;gap:9px;flex-wrap:wrap}
+.review-copy>small{color:var(--subtext);font-size:11px;line-height:1.5}
+.review-unsorted{display:grid;gap:9px;padding:13px 15px;border:1px dashed color-mix(in srgb,var(--accent) 34%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--accent-soft) 30%,transparent)}
+.review-unsorted p{margin:0;color:var(--subtext);font-size:12px;line-height:1.5}
+.review-unsorted ul{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.review-unsorted li{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;min-width:0}
+.review-unsorted li>span:first-child{flex:1 1 190px;min-width:0;overflow-wrap:anywhere;font-size:13px;font-weight:700}
+.review-unsorted-actions{display:flex;gap:6px;flex-shrink:0}
+.review-unsorted-actions button{padding:5px 11px;border:1px solid var(--border);border-radius:999px;background:var(--panel);color:var(--subtext);font-size:11px;font-weight:700}
+.review-unsorted-actions button:hover{border-color:var(--accent);color:var(--accent-deep)}
 .review-carried{padding:18px 20px;border:1px solid color-mix(in srgb,var(--accent) 26%,var(--border));border-radius:14px;background:color-mix(in srgb,var(--accent-soft) 45%,var(--panel))}
 .review-carried blockquote{margin:8px 0 0;color:var(--text);font-size:15px;line-height:1.55;font-style:italic}
 .review-carried small{display:block;margin-top:11px;color:var(--subtext);font-size:12px}

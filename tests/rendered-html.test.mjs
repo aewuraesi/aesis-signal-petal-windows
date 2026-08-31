@@ -50,6 +50,21 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   assert.match(page, /ACT ON THE SIGNAL/);
   assert.match(page, /NEXT WEEK’S PRIORITIES/);
   assert.match(page, /WHAT YOU LEARNED/);
+
+  // The professional summary is built to be pasted into a work chat as it is, so it must
+  // keep drawing only on professional work — and, as ever, never on the diary.
+  assert.match(page, /function professionalSummary/);
+  assert.match(page, /function personalSummary/);
+  assert.match(page, /issue\.lane === "professional"/);
+  assert.match(page, /issue\.lane === "personal"/);
+  assert.match(page, /ready to paste into Teams or Slack/);
+  assert.match(page, /NOT SORTED YET/);
+  // A task can never be logged without a lane; unsorted only ever means "logged before this existed".
+  assert.match(page, /disabled=\{!newLane\}/);
+  assert.match(page, /Choose professional or personal first/);
+  assert.match(page, /Deliberately a count, never the words/);
+  // Unsorted work is reachable from exactly one place in the copy: the combined one.
+  assert.match(page, /review\.unsorted/);
   assert.match(page, /YOUR FIRST SIGNAL LOOP/);
   assert.match(page, /Command palette/);
   assert.match(page, /missing-eta/);

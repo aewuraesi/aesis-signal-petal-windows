@@ -6,9 +6,14 @@
 export type Status = string;
 export type Entry = { id: string; at: string; text: string; author: string };
 export type Profile = { name: string; role: string };
+/* Personal or professional, and optional on purpose: anything logged before this existed
+   stays unsorted rather than being guessed at. Unsorted work only ever appears in the
+   combined weekly summary, never in the one written to be pasted into a work channel. */
+export type Lane = "professional" | "personal";
 export type Issue = {
   id: string; title: string; details: string; owner: string; action: string;
   expected: string; createdAt: string; updatedAt?: string; completedAt?: string; focusHandledAt?: string; status: Status; outcome: string; followUpPeople: string[]; updates: Entry[];
+  lane?: Lane;
   memory?: { symptoms: string; rootCause: string; resolution: string; learning: string; followUp: string };
   relatedIssueIds?: string[];
 };
@@ -76,6 +81,7 @@ const isGeneratedRelatedWorkUpdate = (update: Entry) => update.author === "Signa
 export const normaliseIssues = (issues: Issue[]) => issues.map(issue => ({
   ...issue,
   followUpPeople: Array.isArray(issue.followUpPeople) ? issue.followUpPeople : [],
+  lane: issue.lane === "professional" || issue.lane === "personal" ? issue.lane : undefined,
   focusHandledAt: typeof issue.focusHandledAt === "string" ? issue.focusHandledAt : undefined,
   /* Early versions promoted a loose keyword match into a permanent timeline entry.
      Those entries were machine guesses rather than user-authored history, so old

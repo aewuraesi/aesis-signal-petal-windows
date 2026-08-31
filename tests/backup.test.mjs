@@ -24,6 +24,16 @@ const payload = overrides => ({
   ...overrides,
 });
 
+test("a task's lane survives the round trip, and a nonsense one is dropped", () => {
+  const original = payload({ issues: [issue({ lane: "professional" }), issue({ id: "i2", lane: "personal" }), issue({ id: "i3" })] });
+  const back = decodeTransfer(encodeTransfer(original));
+  assert.deepEqual(back.issues.map(item => item.lane), ["professional", "personal", undefined]);
+  // An old backup, or a hand-edited one, must not smuggle a third lane into the summaries.
+  const cleaned = normaliseIssues([issue({ lane: "work" }), issue({ id: "i2", lane: "personal" })]);
+  assert.equal(cleaned[0].lane, undefined);
+  assert.equal(cleaned[1].lane, "personal");
+});
+
 test("a backup survives the round trip unchanged", () => {
   const original = payload();
   assert.deepEqual(decodeTransfer(encodeTransfer(original)), original);
