@@ -14,7 +14,10 @@ export type Issue = {
   id: string; title: string; details: string; owner: string; action: string;
   expected: string; createdAt: string; updatedAt?: string; completedAt?: string; focusHandledAt?: string; status: Status; outcome: string; followUpPeople: string[]; updates: Entry[];
   lane?: Lane;
-  memory?: { symptoms: string; rootCause: string; resolution: string; learning: string; followUp: string };
+  /* `shareable` is the one line the writer chooses to say outside the team. It is asked for
+     only on professional work, and when it is there the weekly summary uses it in place of
+     the raw title and outcome — the app tidies wording, but it never invents meaning. */
+  memory?: { symptoms: string; rootCause: string; resolution: string; learning: string; followUp: string; shareable?: string };
   relatedIssueIds?: string[];
 };
 export type Mood = "bright" | "calm" | "okay" | "low" | "anxious" | "frustrated";

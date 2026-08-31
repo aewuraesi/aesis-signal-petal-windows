@@ -488,6 +488,7 @@ main.dark-mode .mood-okay{color:#ded9e8;background:#3a3545}
 .lane-picker>small,.lane-field>small:empty{color:var(--subtext);font-size:11px;line-height:1.5}
 .lane-field>small{color:var(--subtext);font-size:11px;line-height:1.5}
 .lane-field .link-options{margin-top:2px}
+.memory-modal label small{font-weight:500;opacity:.7;text-transform:none;letter-spacing:0}
 .create:disabled{opacity:.5;cursor:not-allowed;filter:grayscale(.4)}
 .review-copy{display:grid;gap:12px;padding:18px 20px;border:1px solid var(--border);border-radius:15px;background:var(--panel)}
 .review-copy-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}

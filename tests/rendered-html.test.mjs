@@ -62,6 +62,12 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   // A task can never be logged without a lane; unsorted only ever means "logged before this existed".
   assert.match(page, /disabled=\{!newLane\}/);
   assert.match(page, /Choose professional or personal first/);
+  // The extra shareable line is asked for on professional work only, and the summary tidies
+  // every line of the writer's own text before it reaches a work channel.
+  assert.match(page, /How you’d say this outside the team/);
+  assert.match(page, /name="shareable"/);
+  assert.match(page, /professionalLine\(\{ shareable: issue\.memory\?\.shareable/);
+  assert.match(page, /professionalTone\(issue\.title\)/);
   assert.match(page, /Deliberately a count, never the words/);
   // Unsorted work is reachable from exactly one place in the copy: the combined one.
   assert.match(page, /review\.unsorted/);

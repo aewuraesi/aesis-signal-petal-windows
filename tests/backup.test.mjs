@@ -24,6 +24,15 @@ const payload = overrides => ({
   ...overrides,
 });
 
+test("the shareable line survives the round trip with the rest of the notes", () => {
+  const memory = { symptoms: "", rootCause: "", resolution: "Raised the timeout", learning: "Alarm on timeouts.", followUp: "", shareable: "Payment retry backlog cleared" };
+  const back = decodeTransfer(encodeTransfer(payload({ issues: [issue({ lane: "professional", memory })] })));
+  assert.deepEqual(back.issues[0].memory, memory);
+  // A record written before the field existed must still load, with no shareable line.
+  const older = normaliseIssues([issue({ memory: { symptoms: "", rootCause: "", resolution: "Fixed", learning: "Note", followUp: "" } })]);
+  assert.equal(older[0].memory.shareable, undefined);
+});
+
 test("a task's lane survives the round trip, and a nonsense one is dropped", () => {
   const original = payload({ issues: [issue({ lane: "professional" }), issue({ id: "i2", lane: "personal" }), issue({ id: "i3" })] });
   const back = decodeTransfer(encodeTransfer(original));
