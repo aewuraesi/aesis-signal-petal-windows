@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { encodeTransfer, decodeTransfer, isValidPayload, normaliseIssues, backupFileName, mergeTransferData } from "../app/backup.ts";
+import { encodeTransfer, decodeTransfer, isValidPayload, normaliseIssues, backupFileName, mergeTransferData, asDateInput } from "../app/backup.ts";
 
 const issue = overrides => ({
   id: "i1", title: "Atlas PIN lookup failures", details: "PINs come back empty", owner: "Aesi",
@@ -43,6 +43,25 @@ test("a task's lane survives the round trip, and a nonsense one is dropped", () 
   assert.equal(cleaned[1].lane, "personal");
 });
 
+test("a due date is coerced into the one shape the date field can show", () => {
+  /* The bug this prevents: an ISO stamp parses fine for the overdue maths but renders as an
+     EMPTY field, so a task counts as late while showing no date at all. */
+  assert.equal(asDateInput("2026-11-30T09:00"), "2026-11-30T09:00");
+  assert.match(asDateInput("2026-11-30T09:00:00.000Z"), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  assert.equal(asDateInput(""), "");
+  assert.equal(asDateInput("   "), "");
+  assert.equal(asDateInput("not a date at all"), "");
+  assert.equal(asDateInput(undefined), "");
+  assert.equal(asDateInput(42), "");
+
+  // Seconds and milliseconds are dropped rather than left to blank the field.
+  assert.equal(asDateInput("2026-11-30T09:00:30"), "2026-11-30T09:00");
+
+  const cleaned = normaliseIssues([issue({ expected: "2026-11-30T09:00:00.000Z" }), issue({ id: "i2", expected: "rubbish" })]);
+  assert.match(cleaned[0].expected, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  assert.equal(cleaned[1].expected, "");
+});
+
 test("a backup survives the round trip unchanged", () => {
   const original = payload();
   assert.deepEqual(decodeTransfer(encodeTransfer(original)), original);
@@ -56,6 +75,12 @@ test("the round trip keeps non-ASCII text intact", () => {
 test("valid payloads are accepted at both versions", () => {
   assert.equal(isValidPayload(payload()), true);
   assert.equal(isValidPayload(payload({ version: 1 })), true);
+});
+
+test("a backup with malformed nested task data is rejected", () => {
+  assert.equal(isValidPayload(payload({ issues: [issue({ updates: "not a timeline" })] })), false);
+  assert.equal(isValidPayload(payload({ issues: [issue({ priority: "catastrophic" })] })), false);
+  assert.equal(isValidPayload(payload({ issues: [issue({ archivedAt: "not a date" })] })), false);
 });
 
 test("anything that is not a backup is rejected before it can replace data", () => {

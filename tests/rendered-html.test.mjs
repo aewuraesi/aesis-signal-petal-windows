@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -20,6 +20,14 @@ test("server-renders the Signal Petal workspace", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
+
+  /* A \uXXXX escape is NOT an escape in JSX text — it renders as those six literal characters.
+     Inside a braced expression or an attribute string it is fine, which is what makes it easy
+     to get wrong; it has shipped twice, an arrow and an em dash. Grepping the source for this
+     cannot tell JSX text from an arrow function followed by a regex, so the check is on the
+     rendered output instead. Dialogs are not server-rendered — the browser suite covers those. */
+  const rawEscapes = html.match(/\\u[0-9a-fA-F]{4}/g) ?? [];
+  assert.deepEqual(rawEscapes, [], `\\uXXXX reached the page as text: ${rawEscapes.join(" | ")}`);
   assert.match(html, /<title>Aesi&#x27;s Signal Petal — SRE Work Tracker<\/title>/i);
   assert.match(html, /A private, cloud-synced workspace for issue tracking and follow-ups\./i);
   assert.match(html, /Signal Petal/);
@@ -30,51 +38,62 @@ test("server-renders the Signal Petal workspace", async () => {
 });
 
 test("keeps private diary content contained and focus guidance actionable", async () => {
-  const [page, css] = await Promise.all([
+  /* page.tsx is being broken up a piece at a time, so the source these assertions read is
+     page.tsx PLUS everything under app/components — listed, not named. Otherwise every
+     extraction breaks whichever strings happen to have moved that day. */
+  const componentDir = new URL("../app/components/", import.meta.url);
+  const componentFiles = (await readdir(componentDir)).filter(name => name.endsWith(".tsx") || name.endsWith(".ts"));
+  const [page, css, ...components] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    ...componentFiles.map(name => readFile(new URL(name, componentDir), "utf8")),
   ]);
+  const source = [page, ...components].join("\n");
 
-  assert.match(page, /PRIVATE REFLECTIONS/);
-  assert.match(page, /Everything here is worked out on this device/);
-  assert.match(page, /no plaintext copy is allowed to linger/);
-  assert.match(page, /TODAY’S THREE MOVES/);
-  assert.match(page, /TODAY’S SIGNAL GARDEN/);
-  assert.match(page, /WEEK IN BLOOM/);
-  assert.match(page, /Followed up/);
-  assert.match(page, /rescheduleFocus/);
-  assert.match(page, /handled for today/);
-  assert.match(page, /TWO-MINUTE WRAP-UP/);
-  assert.match(page, /What can intentionally wait/);
-  assert.match(page, /never included in copied work summaries/);
-  assert.match(page, /ACT ON THE SIGNAL/);
-  assert.match(page, /NEXT WEEK’S PRIORITIES/);
-  assert.match(page, /WHAT YOU LEARNED/);
+  assert.match(source, /PRIVATE REFLECTIONS/);
+  /* The Insights diary band must keep promising that nothing leaves the device. This used
+     to be pinned to the wording in the older, hidden copy of the band; that copy is gone
+     and this is the live one's sentence. */
+  assert.match(source, /Private, on-device patterns/);
+  assert.match(source, /no plaintext copy is allowed to linger/);
+  assert.match(source, /TODAY’S THREE MOVES/);
+  assert.match(source, /TODAY’S SIGNAL GARDEN/);
+  assert.match(source, /WEEK IN BLOOM/);
+  assert.match(source, /Followed up/);
+  assert.match(source, /rescheduleFocus/);
+  assert.match(source, /handled for today/);
+  assert.match(source, /TWO-MINUTE WRAP-UP/);
+  assert.match(source, /What can intentionally wait/);
+  assert.match(source, /never included in copied work summaries/);
+  assert.match(source, /ACT ON THE SIGNAL/);
+  assert.match(source, /NEXT WEEK’S PRIORITIES/);
+  assert.match(source, /WHAT YOU LEARNED/);
 
   // The professional summary is built to be pasted into a work chat as it is, so it must
   // keep drawing only on professional work — and, as ever, never on the diary.
-  assert.match(page, /function professionalSummary/);
-  assert.match(page, /function personalSummary/);
-  assert.match(page, /issue\.lane === "professional"/);
-  assert.match(page, /issue\.lane === "personal"/);
-  assert.match(page, /ready to paste into Teams or Slack/);
-  assert.match(page, /NOT SORTED YET/);
+  assert.match(source, /function professionalSummary/);
+  assert.match(source, /function personalSummary/);
+  assert.match(source, /issue\.lane === "professional"/);
+  assert.match(source, /issue\.lane === "personal"/);
+  assert.match(source, /ready to paste into Teams or Slack/);
+  assert.match(source, /NOT SORTED YET/);
   // A task can never be logged without a lane; unsorted only ever means "logged before this existed".
-  assert.match(page, /disabled=\{!newLane\}/);
-  assert.match(page, /Choose professional or personal first/);
+  assert.match(source, /disabled=\{!newLane\}/);
+  assert.match(source, /Choose professional or personal first/);
   // The extra shareable line is asked for on professional work only, and the summary tidies
   // every line of the writer's own text before it reaches a work channel.
-  assert.match(page, /How you’d say this outside the team/);
-  assert.match(page, /name="shareable"/);
-  assert.match(page, /professionalLine\(\{ shareable: issue\.memory\?\.shareable/);
-  assert.match(page, /professionalTone\(issue\.title\)/);
-  assert.match(page, /Deliberately a count, never the words/);
+  assert.match(source, /How you’d say this outside the team/);
+  assert.match(source, /name="shareable"/);
+  assert.match(source, /professionalLine\(\{ shareable: issue\.memory\?\.shareable/);
+  assert.match(source, /professionalTone\(issue\.title\)/);
+  assert.match(source, /Deliberately a count, never the words/);
   // Unsorted work is reachable from exactly one place in the copy: the combined one.
-  assert.match(page, /review\.unsorted/);
-  assert.match(page, /YOUR FIRST SIGNAL LOOP/);
-  assert.match(page, /Command palette/);
-  assert.match(page, /missing-eta/);
-  assert.match(page, /missing-action/);
+  assert.match(source, /review\.unsorted/);
+  assert.match(source, /YOUR FIRST SIGNAL LOOP/);
+  assert.match(source, /Command palette/);
+  assert.match(source, /missing-eta/);
+  assert.match(source, /missing-action/);
+
 
   assert.match(css, /\.detail-modal\{[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
   assert.match(css, /\.detail-title h2,\.detail-title p\{overflow-wrap:anywhere;word-break:break-word/);

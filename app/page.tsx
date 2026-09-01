@@ -1,19 +1,33 @@
 "use client";
 
-import { Fragment, type ChangeEvent, FormEvent, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { type ChangeEvent, FormEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import Petal from "./petal";
+import CommandPalette, { type CommandItem } from "./components/CommandPalette";
+import OnboardingDialog from "./components/OnboardingDialog";
+import TaskActionControls from "./components/TaskActionControls";
+import TaskBadges from "./components/TaskBadges";
 import { isValidPayload, normaliseIssues, encodeTransfer, decodeTransfer, backupFileName, mergeTransferData } from "./backup";
 import { professionalTone, professionalLine, renderBlocks, overdueSpan } from "./summary";
-import type { Status, Profile, Issue, Lane, Mood, DiaryEntry, DiaryAction, DiaryEvent, DiaryVault, DailyCheckIn, TransferPayload } from "./backup";
+import { startOfWeek, addDays, toDateTimeInput, weekLabel, daysSince, dateLabel, dayKey, dayBefore, spanLabel } from "./dates";
+import { isCompleteStatus, statusClass, completedAtOf, isOverdue, daysOverdue, nextOccurrence, workInPeriod, type PeriodWork } from "./tasks";
+import { useDialogFocus } from "./dialog-focus";
+import { readStore, writeStore, dropStore, storageStore, type StorageTrouble } from "./storage";
+import { issuesToCsv, csvFileName } from "./csv";
+import type { Status, Profile, Issue, Lane, Repeat, Mood, DiaryEntry, DiaryAction, DiaryEvent, DiaryVault, DailyCheckIn, TransferPayload } from "./backup";
 
-const startOfWeek = (value: Date) => { const at = new Date(value.getFullYear(), value.getMonth(), value.getDate()); at.setDate(at.getDate() - ((at.getDay() + 6) % 7)); return at; };
-const addDays = (value: Date, days: number) => { const at = new Date(value); at.setDate(at.getDate() + days); return at; };
-const toDateTimeInput = (value: Date) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}T${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
 // A completed issue's timestamp: the explicit stamp if there is one, else its last update.
-const completedAtOf = (issue: Issue) => issue.completedAt || issue.updates[issue.updates.length - 1]?.at || issue.createdAt;
 /* Her words, not the app's: the control says professional and personal. */
+const repeatChoices: { label: string; value?: Repeat }[] = [
+  { label: "No, it is a one-off" },
+  { label: "Every week", value: { every: 1, unit: "week" } },
+  { label: "Every 2 weeks", value: { every: 2, unit: "week" } },
+  { label: "Every month", value: { every: 1, unit: "month" } },
+  { label: "Every 3 months", value: { every: 3, unit: "month" } },
+  { label: "Every 6 months", value: { every: 6, unit: "month" } },
+  { label: "Every year", value: { every: 1, unit: "year" } },
+];
+const repeatKey = (repeat?: Repeat) => repeat ? `${repeat.every}-${repeat.unit}` : "";
 const laneOptions: { value: Lane; label: string }[] = [{ value: "professional", label: "Professional" }, { value: "personal", label: "Personal" }];
-const weekLabel = (start: Date) => `${new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(start)} – ${new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(addDays(start, 6))}`;
 type StatusDraft = { id: string; name: string; color: string; original?: string; kind?: "new" | "ongoing" | "terminal" };
 type MetricFocus = "home-total" | "home-open" | "home-overdue" | "home-resolved" | "mine-open" | "mine-overdue" | "mine-resolved" | "mine-total" | "attention-overdue" | "attention-oldest" | "attention-owners" | "attention-first";
 type FocusRecommendation = { issue: Issue; kind: "overdue" | "missing-eta" | "missing-action"; priority: number; reason: string; move: string };
@@ -113,14 +127,6 @@ const moods: { value: Mood; label: string; symbol: string }[] = [
   { value: "okay", label: "Okay", symbol: "•" }, { value: "low", label: "Low", symbol: "☁" },
   { value: "anxious", label: "Anxious", symbol: "≈" }, { value: "frustrated", label: "Frustrated", symbol: "△" },
 ];
-const seed: Issue[] = [
-  { lane: "professional", id: "seed-1", title: "Checkout API latency spike", details: "p95 latency increased after the morning deploy. Watching the payments dependency.", owner: "Maya Chen", action: "Comparing traces and rolling back the feature flag if confirmed.", expected: "2026-08-13T16:30", createdAt: "2026-08-13T11:10", status: "Investigating", outcome: "", followUpPeople: [], updates: [{ id: "u1", at: "2026-08-13T11:10", author: "You", text: "Opened incident bridge and shared dashboard links." }, { id: "u2", at: "2026-08-13T12:05", author: "Maya Chen", text: "Trace points to a connection-pool regression; testing a flag rollback." }] },
-  { lane: "professional", id: "seed-2", title: "Kafka consumer lag", details: "Lag is building in the customer-events consumer group.", owner: "Jordan Lee", action: "Increasing partition concurrency and checking dead-letter volume.", expected: "2026-08-13T14:00", createdAt: "2026-08-13T09:25", status: "Waiting on dev", outcome: "", followUpPeople: [], updates: [{ id: "u3", at: "2026-08-13T09:25", author: "You", text: "Captured consumer metrics and assigned follow-up." }] },
-  { lane: "professional", id: "seed-3", title: "Certificate renewal runbook", details: "Document and validate the renewal sequence before the next rotation.", owner: "You", action: "Drafting the runbook and scheduling a staging dry run.", expected: "2026-08-15T15:00", createdAt: "2026-08-12T15:40", status: "Pending Monitoring", outcome: "", followUpPeople: [], updates: [{ id: "u4", at: "2026-08-12T15:40", author: "You", text: "Added expiry monitoring to the weekly review." }] },
-];
-
-const statusClass = (status: Status) => `status ${status.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
-const isCompleteStatus = (status: Status) => status === "Resolved" || status === "Closed";
 /* ---------------------------------------------------------------------------
    Optional diary lock. AES-GCM with a key derived from the passphrase by PBKDF2.
    The key is never written anywhere — it lives in memory for the session only —
@@ -144,9 +150,21 @@ const openDiaryVault = async (key: CryptoKey, vault: DiaryVault) => {
   return { entries: Array.isArray(payload.entries) ? payload.entries : [], log: Array.isArray(payload.log) ? payload.log : [] };
 };
 const readStoredVault = (): DiaryVault | null => {
-  const raw = localStorage.getItem("signal-petal-diary-vault");
+  const raw = readStore("signal-petal-diary-vault");
   if (!raw) return null;
   try { const parsed = JSON.parse(raw) as DiaryVault; return parsed?.salt && parsed?.iv && parsed?.data ? parsed : null; } catch { return null; }
+};
+/* Excel reads a UTF-8 file as the local codepage unless it finds a byte-order mark, which
+   turns every em dash and accented name into mojibake. The BOM is three bytes and fixes it. */
+const saveCsvFile = (text: string) => {
+  const url = URL.createObjectURL(new Blob(["\uFEFF", text], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = csvFileName();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
 };
 const saveBackupFile = (payload: TransferPayload) => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
@@ -159,14 +177,8 @@ const saveBackupFile = (payload: TransferPayload) => {
   // Revoking immediately can cancel the download in some browsers.
   window.setTimeout(() => URL.revokeObjectURL(url), 4000);
 };
-const daysSince = (value: string) => Math.floor((Date.now() - new Date(value).getTime()) / 86400000);
-const dateLabel = (value: string) => value ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)) : "No ETA";
-const isOverdue = (issue: Issue) => !isCompleteStatus(issue.status) && issue.expected && new Date(issue.expected).getTime() < Date.now();
-const daysOverdue = (issue: Issue) => Math.max(1, Math.ceil((Date.now() - new Date(issue.expected).getTime()) / 86400000));
 /* Local, not UTC: the calendar builds its cell keys from local date parts, so keying
    entries in UTC put evening work on the following day for anyone west of Greenwich. */
-const dayKey = (value: string) => { const at = new Date(value); return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`; };
-const dayBefore = (key: string) => { const [year, month, day] = key.split("-").map(Number); const at = new Date(year, month - 1, day - 1); return dayKey(at.toISOString()); };
 /* Names are stored the way they should read. Owners and follow-up people are matched
    case-insensitively but rendered verbatim, so "maya chen" typed in a hurry sat beside
    "Maya Chen" in the owner report looking like a second person. Capitalising at the
@@ -176,14 +188,6 @@ const dayBefore = (key: string) => { const [year, month, day] = key.split("-").m
 const titleCaseName = (value: string) => value.replace(/(^|[\s(/,;&'\u2019-])(\p{L})/gu, (_match, lead: string, letter: string) => lead + letter.toLocaleUpperCase());
 const peopleFromInput = (value: string) => Array.from(new Map(value.split(/[,;\n]+/).map(person => titleCaseName(person.trim())).filter(Boolean).map(person => [person.toLowerCase(), person])).values());
 // Whole units only. "4 hours" is a fact; "0.17 days" is a spreadsheet talking.
-const spanLabel = (from: string, to: string) => {
-  const minutes = Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000));
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 36) return `${hours} hour${hours === 1 ? "" : "s"}`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"}`;
-};
 /* ---------------------------------------------------------------------------
    Diary reflection engine.
 
@@ -377,7 +381,7 @@ const writingPrompts = [
   "What are you proud of that nobody else noticed?",
 ];
 const lookBackWindows = [{ days: 365, label: "A year ago" }, { days: 180, label: "Six months ago" }, { days: 90, label: "Three months ago" }, { days: 30, label: "A month ago" }, { days: 7, label: "A week ago" }] as const;
-const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEntry[] = [], writtenAt?: string) => {
+export const diarySuggestion = (mood: Mood, text: string, title = "", history: DiaryEntry[] = [], writtenAt?: string) => {
   const raw = `${title} ${text}`.trim();
   const note = raw.toLowerCase();
   if (crisisPattern.test(note)) {
@@ -552,6 +556,7 @@ export default function Home() {
   const [memoryIssueId, setMemoryIssueId] = useState("");
   // The three optional fields stay mounted while collapsed so FormData still carries
   // their existing values on save; hiding them with `hidden` rather than unmounting.
+  useDialogFocus();
   const [memoryDetail, setMemoryDetail] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -615,7 +620,7 @@ export default function Home() {
   const [newFollowUps, setNewFollowUps] = useState<string[]>([]);
   const [newLane, setNewLane] = useState<Lane | undefined>(undefined);
   const [newFollowUpInput, setNewFollowUpInput] = useState("");
-  const [filter, setFilter] = useState<"All" | "Mine" | "Overdue">("All");
+  const [filter, setFilter] = useState<"All" | "Mine" | "Overdue" | "Archive">("All");
   const [metricFocus, setMetricFocus] = useState<MetricFocus>("home-total");
   const [focusRescheduleId, setFocusRescheduleId] = useState("");
   const [focusCompletingId, setFocusCompletingId] = useState("");
@@ -629,12 +634,16 @@ export default function Home() {
   const [reviewCopied, setReviewCopied] = useState("");
   /* On by default because the takeaway is the line that makes an update read as thought-through; one click removes it. */
   const [reviewTakeaway, setReviewTakeaway] = useState(true);
+  const [copyPeriod, setCopyPeriod] = useState<"week" | "quarter" | "year">("week");
+  const [showOlderDone, setShowOlderDone] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date(2026, 7, 1));
   const [selectedDay, setSelectedDay] = useState<string>("2026-08-13");
   const [theme, setTheme] = useState("rose");
   const [darkMode, setDarkMode] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const permission = useSyncExternalStore(permissionStore.subscribe, permissionStore.getSnapshot, permissionStore.getServerSnapshot);
+  const storageTrouble: StorageTrouble = useSyncExternalStore(storageStore.subscribe, storageStore.getSnapshot, storageStore.getServerSnapshot);
+  const [backupSnoozed, setBackupSnoozed] = useState("");
   const [remindersEnabled, setRemindersEnabled] = useState(false);
   const [reminderTime, setReminderTime] = useState("16:30");
   const [reminderFeedback, setReminderFeedback] = useState("");
@@ -654,78 +663,92 @@ export default function Home() {
 
   useEffect(() => {
     let loadedIssues: Issue[] = [];
-    const saved = localStorage.getItem("signal-petal-issues");
+    const saved = readStore("signal-petal-issues");
     if (saved) {
       try { loadedIssues = normaliseIssues(JSON.parse(saved) as Issue[]).map(i => ({ ...i, followUpPeople: i.followUpPeople.filter(person => typeof person === "string" && person.trim()).map(person => person.trim()), createdAt: i.createdAt || i.updates?.[0]?.at || new Date().toISOString() })); setIssues(loadedIssues); }
-      catch { localStorage.removeItem("signal-petal-issues"); }
+      catch { dropStore("signal-petal-issues"); }
     }
-    const savedStatuses = localStorage.getItem("signal-petal-statuses");
+    const savedStatuses = readStore("signal-petal-statuses");
     let loadedStatuses = defaultStatuses;
     if (savedStatuses) {
       try { const parsed = JSON.parse(savedStatuses); if (Array.isArray(parsed)) loadedStatuses = parsed.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map(value => value.trim()); }
-      catch { localStorage.removeItem("signal-petal-statuses"); }
+      catch { dropStore("signal-petal-statuses"); }
     }
     const terminalStatus = loadedStatuses.includes("Closed") && !loadedStatuses.includes("Resolved") ? "Closed" : "Resolved";
     const customStatuses = Array.from(new Set([...loadedStatuses, ...loadedIssues.map(issue => issue.status)].filter(status => !["New", "Ongoing", "Resolved", "Closed"].includes(status))));
     setStatuses(["New", "Ongoing", ...customStatuses, terminalStatus]);
-    const savedColors = localStorage.getItem("signal-petal-status-colors");
-    if (savedColors) { try { const parsed = JSON.parse(savedColors); if (parsed && typeof parsed === "object") setStatusColors({ ...defaultStatusColors, ...parsed }); } catch { localStorage.removeItem("signal-petal-status-colors"); } }
-    const savedProfile = localStorage.getItem("signal-petal-profile");
-    if (savedProfile) { try { const parsed = JSON.parse(savedProfile) as Profile; if (parsed.name?.trim() && parsed.role?.trim()) setProfile({ name: parsed.name.trim(), role: parsed.role.trim() }); } catch { localStorage.removeItem("signal-petal-profile"); } }
-    setTheme(localStorage.getItem("signal-petal-theme") || "rose");
-    setDarkMode(localStorage.getItem("signal-petal-dark") === "true");
-    setReminderTime(localStorage.getItem("signal-petal-reminder-time") || "16:30");
-    setDiaryFont(localStorage.getItem("signal-petal-diary-font") || "journal");
-    setDiaryPaper(localStorage.getItem("signal-petal-diary-paper") || "cream");
-    const savedInsightPrefs = localStorage.getItem("signal-petal-insight-privacy");
+    const savedColors = readStore("signal-petal-status-colors");
+    if (savedColors) { try { const parsed = JSON.parse(savedColors); if (parsed && typeof parsed === "object") setStatusColors({ ...defaultStatusColors, ...parsed }); } catch { dropStore("signal-petal-status-colors"); } }
+    const savedProfile = readStore("signal-petal-profile");
+    if (savedProfile) { try { const parsed = JSON.parse(savedProfile) as Profile; if (parsed.name?.trim() && parsed.role?.trim()) setProfile({ name: parsed.name.trim(), role: parsed.role.trim() }); } catch { dropStore("signal-petal-profile"); } }
+    setTheme(readStore("signal-petal-theme") || "rose");
+    setDarkMode(readStore("signal-petal-dark") === "true");
+    setReminderTime(readStore("signal-petal-reminder-time") || "16:30");
+    setDiaryFont(readStore("signal-petal-diary-font") || "journal");
+    setDiaryPaper(readStore("signal-petal-diary-paper") || "cream");
+    const savedInsightPrefs = readStore("signal-petal-insight-privacy");
     if (savedInsightPrefs) {
       try { const parsed = JSON.parse(savedInsightPrefs); if (parsed && typeof parsed === "object") setDiaryInsightPrefs(current => ({ ...current, ...parsed })); }
-      catch { localStorage.removeItem("signal-petal-insight-privacy"); }
+      catch { dropStore("signal-petal-insight-privacy"); }
     }
-    setLastBackup(localStorage.getItem("signal-petal-last-backup") || "");
-    const savedCheckIns = localStorage.getItem("signal-petal-daily-check-ins");
-    if (savedCheckIns) { try { const parsed = JSON.parse(savedCheckIns); if (Array.isArray(parsed)) setDailyCheckIns(parsed); } catch { localStorage.removeItem("signal-petal-daily-check-ins"); } }
+    setLastBackup(readStore("signal-petal-last-backup") || "");
+    setBackupSnoozed(readStore("signal-petal-backup-snoozed") || "");
+    const savedCheckIns = readStore("signal-petal-daily-check-ins");
+    if (savedCheckIns) { try { const parsed = JSON.parse(savedCheckIns); if (Array.isArray(parsed)) setDailyCheckIns(parsed); } catch { dropStore("signal-petal-daily-check-ins"); } }
     setPromptIndex(Math.floor(new Date().setHours(0, 0, 0, 0) / 86400000) % writingPrompts.length);
     setReviewWeek(startOfWeek(new Date()));
     const storedVault = readStoredVault();
     if (storedVault) { saltRef.current = storedVault.salt; setLockOn(true); setDiaryLocked(true); }
     let loadedDiary: DiaryEntry[] = [];
-    const savedDiary = localStorage.getItem("signal-petal-diary");
-    if (savedDiary) { try { const parsed = JSON.parse(savedDiary); if (Array.isArray(parsed)) loadedDiary = parsed; } catch { localStorage.removeItem("signal-petal-diary"); } }
+    const savedDiary = readStore("signal-petal-diary");
+    if (savedDiary) { try { const parsed = JSON.parse(savedDiary); if (Array.isArray(parsed)) loadedDiary = parsed; } catch { dropStore("signal-petal-diary"); } }
     if (!readStoredVault()) setDiaryEntries(loadedDiary);
     let loadedDiaryLog: DiaryEvent[] = [];
-    const savedDiaryLog = localStorage.getItem("signal-petal-diary-log");
-    if (savedDiaryLog) { try { const parsed = JSON.parse(savedDiaryLog); if (Array.isArray(parsed)) loadedDiaryLog = parsed; } catch { localStorage.removeItem("signal-petal-diary-log"); } }
+    const savedDiaryLog = readStore("signal-petal-diary-log");
+    if (savedDiaryLog) { try { const parsed = JSON.parse(savedDiaryLog); if (Array.isArray(parsed)) loadedDiaryLog = parsed; } catch { dropStore("signal-petal-diary-log"); } }
     // Reflections written before the log existed still deserve a place on the calendar.
     const alreadyLogged = new Set(loadedDiaryLog.filter(event => event.action === "created").map(event => event.entryId));
     const backfilled = loadedDiary
       .filter(entry => !alreadyLogged.has(entry.id))
       .map<DiaryEvent>(entry => ({ id: `backfill-${entry.id}`, entryId: entry.id, at: entry.at, action: "created", title: entry.title, mood: entry.mood, detail: `${wordCount(entry.text)} word${wordCount(entry.text) === 1 ? "" : "s"}` }));
     if (!readStoredVault()) setDiaryLog([...backfilled, ...loadedDiaryLog].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()));
-    const savedReminders = localStorage.getItem("signal-petal-reminders-enabled");
+    const savedReminders = readStore("signal-petal-reminders-enabled");
     if ("Notification" in window) setRemindersEnabled(Notification.permission === "granted" && savedReminders !== "false");
     setNowHour(new Date().getHours());
     setPixelYear(new Date().getFullYear());
     setHydrated(true);
   }, []);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-issues", JSON.stringify(issues)); }, [issues, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-statuses", JSON.stringify(statuses)); }, [statuses, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-status-colors", JSON.stringify(statusColors)); }, [statusColors, hydrated]);
-  useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-theme", theme); localStorage.setItem("signal-petal-dark", String(darkMode)); } }, [theme, darkMode, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminders-enabled", String(remindersEnabled)); }, [remindersEnabled, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-reminder-time", reminderTime); }, [reminderTime, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-daily-check-ins", JSON.stringify(dailyCheckIns)); }, [dailyCheckIns, hydrated]);
-  useEffect(() => { if (hydrated) localStorage.setItem("signal-petal-insight-privacy", JSON.stringify(diaryInsightPrefs)); }, [diaryInsightPrefs, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-issues", JSON.stringify(issues)); }, [issues, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-statuses", JSON.stringify(statuses)); }, [statuses, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-status-colors", JSON.stringify(statusColors)); }, [statusColors, hydrated]);
+  useEffect(() => { if (hydrated) { writeStore("signal-petal-theme", theme); writeStore("signal-petal-dark", String(darkMode)); } }, [theme, darkMode, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-reminders-enabled", String(remindersEnabled)); }, [remindersEnabled, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-reminder-time", reminderTime); }, [reminderTime, hydrated]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-daily-check-ins", JSON.stringify(dailyCheckIns)); }, [dailyCheckIns, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    const syncTaskRoute = (closeWhenMissing = false) => {
+      const match = window.location.pathname.match(/^\/tasks\/([^/]+)$/);
+      if (!match) { if (closeWhenMissing) setShowDetail(false); return; }
+      const issueId = decodeURIComponent(match[1]);
+      if (issues.some(issue => issue.id === issueId)) openIssueDetail(issueId, false);
+    };
+    syncTaskRoute();
+    const onPopState = () => syncTaskRoute(true);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [hydrated, issues]);
+  useEffect(() => { if (hydrated) writeStore("signal-petal-insight-privacy", JSON.stringify(diaryInsightPrefs)); }, [diaryInsightPrefs, hydrated]);
   useEffect(() => {
     if (!hydrated) return;
     if (lockOn) {
       // With the lock on, no plaintext copy is allowed to linger.
-      localStorage.removeItem("signal-petal-diary");
-      localStorage.removeItem("signal-petal-diary-log");
+      dropStore("signal-petal-diary");
+      dropStore("signal-petal-diary-log");
       return;
     }
-    localStorage.setItem("signal-petal-diary", JSON.stringify(diaryEntries));
-    localStorage.setItem("signal-petal-diary-log", JSON.stringify(diaryLog));
+    writeStore("signal-petal-diary", JSON.stringify(diaryEntries));
+    writeStore("signal-petal-diary-log", JSON.stringify(diaryLog));
   }, [diaryEntries, diaryLog, hydrated, lockOn]);
   // Re-seal whenever the unlocked diary changes.
   useEffect(() => {
@@ -733,12 +756,12 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       const sealed = await sealDiary(diaryKey, saltRef.current, diaryEntries, diaryLog);
-      if (!cancelled) localStorage.setItem("signal-petal-diary-vault", JSON.stringify(sealed));
+      if (!cancelled) writeStore("signal-petal-diary-vault", JSON.stringify(sealed));
     })();
     return () => { cancelled = true; };
   }, [diaryEntries, diaryLog, diaryKey, diaryLocked, lockOn, hydrated]);
-  useEffect(() => { if (hydrated) { localStorage.setItem("signal-petal-diary-font", diaryFont); localStorage.setItem("signal-petal-diary-paper", diaryPaper); } }, [diaryFont, diaryPaper, hydrated]);
-  useEffect(() => { if (hydrated && profile) { localStorage.setItem("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
+  useEffect(() => { if (hydrated) { writeStore("signal-petal-diary-font", diaryFont); writeStore("signal-petal-diary-paper", diaryPaper); } }, [diaryFont, diaryPaper, hydrated]);
+  useEffect(() => { if (hydrated && profile) { writeStore("signal-petal-profile", JSON.stringify(profile)); document.title = `${profile.name}'s Signal Petal`; } }, [profile, hydrated]);
   useEffect(() => {
     if (!hydrated) return;
     let cancelled = false;
@@ -771,7 +794,7 @@ export default function Home() {
             if (result.payload.settings.diaryPaper) setDiaryPaper(result.payload.settings.diaryPaper);
           }
           if (incomingHasLockedDiary && !localHasLockedDiary && result.payload.diaryVault) {
-            localStorage.setItem("signal-petal-diary-vault", JSON.stringify(result.payload.diaryVault));
+            writeStore("signal-petal-diary-vault", JSON.stringify(result.payload.diaryVault));
             saltRef.current = result.payload.diaryVault.salt; setLockOn(true); setDiaryLocked(true);
           }
           setActiveId(merged.issues[0]?.id ?? "");
@@ -799,11 +822,12 @@ export default function Home() {
           const merged = mergeTransferData(currentPayload(), result.payload).payload;
           setIssues(merged.issues); setStatuses(merged.statuses); setStatusColors(merged.statusColors);
           setDiaryEntries(merged.diaryEntries ?? []); setDiaryLog(merged.diaryLog ?? []); setDailyCheckIns(merged.dailyCheckIns ?? []);
+          setSyncMessage("A newer cloud copy was found and safely merged with this device.");
           return setSyncState("syncing");
         }
         if (!response.ok) throw new Error("Sync failed");
         syncRevision.current = result.revision ?? syncRevision.current;
-        setLastSyncedAt(result.updatedAt ?? new Date().toISOString()); setSyncState("synced"); setSyncMessage("");
+        setLastSyncedAt(result.updatedAt ?? new Date().toISOString()); setSyncState("synced");
       } catch { setSyncState(navigator.onLine ? "error" : "offline"); }
     }, 900);
     return () => window.clearTimeout(timer);
@@ -874,23 +898,23 @@ export default function Home() {
       // Keying on which items are due — not just the date — means work that slips later in
       // the day still raises an alert instead of being swallowed by this morning's reminder.
       const taskReminderKey = `${today}|${dueSoon.map(issue => issue.id).sort().join(",")}`;
-      if (dueSoon.length && localStorage.getItem("signal-petal-task-reminder-day") !== taskReminderKey) {
+      if (dueSoon.length && readStore("signal-petal-task-reminder-day") !== taskReminderKey) {
         const overdue = dueSoon.filter(isOverdue).length;
         const upcoming = dueSoon.length - overdue;
         const parts = [overdue ? `${overdue} overdue` : "", upcoming ? `${upcoming} due within 24 hours` : ""].filter(Boolean).join(" and ");
         const result = await sendReminderNotification("Signal Petal needs attention", `${parts}. Open your queue to record the next move.`, `signal-petal-tasks-${today}`);
         if (cancelled) return;
-        if (result.delivery) { localStorage.setItem("signal-petal-task-reminder-day", taskReminderKey); setReminderFeedback(`Task reminder sent at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`); }
+        if (result.delivery) { writeStore("signal-petal-task-reminder-day", taskReminderKey); setReminderFeedback(`Task reminder sent at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`); }
         else setReminderFeedback(`Task reminder could not be delivered — ${result.reason}.`);
       }
       const [hour, minute] = reminderTime.split(":").map(Number);
       if (!Number.isFinite(hour) || !Number.isFinite(minute)) return;
       // The time is part of the key, so moving the check-in earlier re-arms it for today.
       const checkInKey = `${today}|${reminderTime}`;
-      if (now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute && localStorage.getItem("signal-petal-check-in-day") !== checkInKey) {
+      if (now.getHours() * 60 + now.getMinutes() >= hour * 60 + minute && readStore("signal-petal-check-in-day") !== checkInKey) {
         const result = await sendReminderNotification("Daily Signal Petal check-in", "Take a moment to update your work and write down how the day felt.", `signal-petal-check-in-${today}`);
         if (cancelled) return;
-        if (result.delivery) { localStorage.setItem("signal-petal-check-in-day", checkInKey); setReminderFeedback(`Daily check-in sent at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`); }
+        if (result.delivery) { writeStore("signal-petal-check-in-day", checkInKey); setReminderFeedback(`Daily check-in sent at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`); }
         else setReminderFeedback(`Daily check-in could not be delivered — ${result.reason}.`);
       }
     };
@@ -909,33 +933,20 @@ export default function Home() {
   const diaryFontStack = (diaryFonts.find(font => font[0] === diaryFont) ?? diaryFonts[0])[2];
   const diarySkin = { "--diary-font": diaryFontStack } as CSSProperties;
   const openEntry = diaryEntries.find(entry => entry.id === openDiaryId);
-  const openEntryIndex = diaryEntries.findIndex(entry => entry.id === openDiaryId);
   const review = useMemo(() => {
     if (!reviewWeek) return null;
     const today = new Date();
     const recentStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6);
     const from = (reviewRange === "recent" ? recentStart : reviewWeek).getTime();
     const to = (reviewRange === "recent" ? new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1) : addDays(reviewWeek, 7)).getTime();
-    const within = (value: string) => { const at = new Date(value).getTime(); return at >= from && at < to; };
-    const shipped = issues.filter(issue => isCompleteStatus(issue.status) && within(completedAtOf(issue)));
-    const logged = issues.filter(issue => within(issue.createdAt));
-    const stalled = issues.filter(issue => !isCompleteStatus(issue.status) && issue.expected && new Date(issue.expected).getTime() < to && isOverdue(issue));
-    const pages = diaryEntries.filter(entry => within(entry.at)).sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    const work = workInPeriod(issues, diaryEntries, dailyCheckIns, from, to);
+    const { shipped, pages } = work;
     const owed = pages.map(entry => statedNeed(entry.text)).filter(Boolean).slice(0, 3);
     const previous = diaryEntries.filter(entry => { const at = new Date(entry.at).getTime(); return at >= from - 7 * 86400000 && at < from; });
-    const checkIns = dailyCheckIns.filter(checkIn => within(checkIn.at));
-    const focusMoves = issues.filter(issue => issue.focusHandledAt && within(issue.focusHandledAt));
-    const parkedIds = Array.from(new Set(checkIns.flatMap(checkIn => checkIn.parkedIssueIds)));
-    const parkedIssues = parkedIds.map(id => issues.find(issue => issue.id === id)).filter((issue): issue is Issue => Boolean(issue));
-    const priorities = [...issues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => Number(isOverdue(b)) - Number(isOverdue(a)) || (a.expected ? new Date(a.expected).getTime() : Infinity) - (b.expected ? new Date(b.expected).getTime() : Infinity)).slice(0, 3);
-    /* The unsorted pile for this period. It is surfaced in the review because a lane nobody
-       ever sets is worse than no lane at all, and it is why the combined copy exists —
-       nothing should fall out of both summaries without being seen. */
-    const unsorted = [...new Map([...shipped, ...stalled, ...logged].filter(issue => !issue.lane).map(issue => [issue.id, issue] as const)).values()];
     const carried = previous.map(entry => statedNeed(entry.text)).filter(Boolean).slice(0, 2);
     const feel = pages.length ? pages.reduce((sum, entry) => sum + moodWeight[entry.mood], 0) / pages.length : null;
-    const gardenStage = Math.min(4, Number(shipped.length > 0) + Number(pages.length > 0) + Number(checkIns.length > 0) + Number(focusMoves.length > 0));
-    return { shipped, logged, stalled, pages, owed, carried, feel, checkIns, focusMoves, parkedIssues, priorities, unsorted, gardenStage, isThisWeek: reviewRange === "calendar" && startOfWeek(today).getTime() === from, isRecent: reviewRange === "recent", from, to };
+    const gardenStage = Math.min(4, Number(shipped.length > 0) + Number(pages.length > 0) + Number(work.checkIns.length > 0) + Number(work.focusMoves.length > 0));
+    return { ...work, owed, carried, feel, gardenStage, isThisWeek: reviewRange === "calendar" && startOfWeek(today).getTime() === from, isRecent: reviewRange === "recent" };
   }, [reviewWeek, reviewRange, issues, diaryEntries, dailyCheckIns]);
   /* Numbered from the oldest page, so page 1 stays page 1 forever. */
   const pageNumbers = useMemo(() => {
@@ -952,7 +963,16 @@ export default function Home() {
     .filter(issue => isCompleteStatus(issue.status) && issue.outcome.trim())
     .sort((a, b) => new Date(completedAtOf(b)).getTime() - new Date(completedAtOf(a)).getTime())
     .slice(0, 12), [issues]);
+  /* The round before this one, so a task that has come round again can open with what was
+     worked out last time rather than as a blank slate. */
+  const previousRound = active?.repeatedFrom ? issues.find(item => item.id === active.repeatedFrom) : undefined;
+  const previousNote = previousRound?.memory?.learning?.trim() || previousRound?.memory?.resolution?.trim() || previousRound?.outcome?.trim() || "";
   const backupAge = lastBackup ? daysSince(lastBackup) : null;
+  /* Only worth mentioning when there is something to lose, it has actually been a while, and
+     the writer has not already said not now this week. The same 14 days Settings uses. */
+  const backupDue = (issues.length > 0 || diaryEntries.length > 0)
+    && (backupAge === null || backupAge >= 14)
+    && (!backupSnoozed || daysSince(backupSnoozed) >= 7);
   const confirmEntry = diaryEntries.find(entry => entry.id === confirmDiaryDelete);
   const diaryNeedle = diaryQuery.trim().toLowerCase();
   const visibleDiary = diaryEntries.filter(entry =>
@@ -972,19 +992,20 @@ export default function Home() {
     return null;
   })();
   const personalOwner = profile?.name || "You";
+  const currentIssues = issues.filter(issue => !issue.archivedAt);
   const todayKey = dayKey(new Date().toISOString());
   const todayCheckIn = dailyCheckIns.find(checkIn => dayKey(checkIn.at) === todayKey);
   const previousCheckIn = [...dailyCheckIns].filter(checkIn => dayKey(checkIn.at) !== todayKey).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
-  const completedToday = issues.filter(issue => isCompleteStatus(issue.status) && dayKey(completedAtOf(issue)) === todayKey);
-  const focusHandledToday = issues.filter(issue => issue.focusHandledAt && dayKey(issue.focusHandledAt) === todayKey);
-  const openCount = issues.filter(i => !isCompleteStatus(i.status)).length;
-  const overdueCount = issues.filter(isOverdue).length;
-  const mine = issues.filter(i => i.owner.toLowerCase() === personalOwner.toLowerCase());
+  const completedToday = currentIssues.filter(issue => isCompleteStatus(issue.status) && dayKey(completedAtOf(issue)) === todayKey);
+  const focusHandledToday = currentIssues.filter(issue => issue.focusHandledAt && dayKey(issue.focusHandledAt) === todayKey);
+  const openCount = currentIssues.filter(i => !isCompleteStatus(i.status)).length;
+  const overdueCount = currentIssues.filter(isOverdue).length;
+  const mine = currentIssues.filter(i => i.owner.toLowerCase() === personalOwner.toLowerCase());
   const mineOpen = mine.filter(i => !isCompleteStatus(i.status));
   const mineOverdue = mine.filter(isOverdue);
   const mineResolved = mine.filter(i => isCompleteStatus(i.status));
-  const attentionQueue = issues.filter(isOverdue).sort((a, b) => new Date(a.expected).getTime() - new Date(b.expected).getTime());
-  const parkableIssues = [...issues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => Number(isOverdue(b)) - Number(isOverdue(a)) || (a.expected ? new Date(a.expected).getTime() : Infinity) - (b.expected ? new Date(b.expected).getTime() : Infinity));
+  const attentionQueue = currentIssues.filter(isOverdue).sort((a, b) => new Date(a.expected).getTime() - new Date(b.expected).getTime());
+  const parkableIssues = [...currentIssues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => Number(isOverdue(b)) - Number(isOverdue(a)) || (a.expected ? new Date(a.expected).getTime() : Infinity) - (b.expected ? new Date(b.expected).getTime() : Infinity));
   const checkInResumeMinimum = toDateTimeInput(addDays(new Date(), 1));
   const focusRecommendations = useMemo<FocusRecommendation[]>(() => issues
     .filter(issue => !isCompleteStatus(issue.status))
@@ -1008,7 +1029,9 @@ export default function Home() {
     .slice(0, 3), [issues, personalOwner]);
   const visible = useMemo(() => {
     let scopedIssues: Issue[];
-    if (filter === "Mine") {
+    if (filter === "Archive") {
+      scopedIssues = issues.filter(issue => Boolean(issue.archivedAt));
+    } else if (filter === "Mine") {
       if (metricFocus === "mine-open") scopedIssues = mineOpen;
       else if (metricFocus === "mine-overdue") scopedIssues = mineOverdue;
       else if (metricFocus === "mine-resolved") scopedIssues = mineResolved;
@@ -1022,13 +1045,32 @@ export default function Home() {
     else if (metricFocus === "home-total") scopedIssues = issues;
     else scopedIssues = issues.filter(i => !isCompleteStatus(i.status));
 
+    scopedIssues = filter === "Archive" ? scopedIssues : scopedIssues.filter(issue => !issue.archivedAt);
+
     const terms = searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return scopedIssues;
-    return scopedIssues.filter(issue => {
-      const searchable = [issue.title, issue.details, issue.action, issue.owner, issue.status, issue.followUpPeople.join(" "), ...issue.updates.flatMap(update => [update.author, update.text])].join(" ").toLocaleLowerCase();
+    const searched = terms.length ? scopedIssues.filter(issue => {
+      const searchable = [issue.title, issue.details, issue.action, issue.owner, issue.status, issue.priority || "", issue.category || "", issue.followUpPeople.join(" "), ...issue.updates.flatMap(update => [update.author, update.text])].join(" ").toLocaleLowerCase();
       return terms.every(term => searchable.includes(term));
-    });
+    }) : scopedIssues;
+
+    /* "All tasks" is ordered by when things were logged, which after a year means finished
+       work sits interleaved with the work that still needs doing — measured at three cards in
+       four. So the default view leads with what is unfinished, then the finished work with the
+       most recent first. Any other card, and any search, is an explicit ask and is left in the
+       order it came in. */
+    if (filter !== "All" || metricFocus !== "home-total" || terms.length) return searched;
+    const unfinished = searched.filter(issue => !isCompleteStatus(issue.status));
+    const finished = searched.filter(issue => isCompleteStatus(issue.status))
+      .sort((a, b) => new Date(completedAtOf(b)).getTime() - new Date(completedAtOf(a)).getTime());
+    return [...unfinished, ...finished];
   }, [issues, filter, metricFocus, personalOwner, searchQuery]);
+  /* Work finished more than a month ago is history rather than a queue. It is folded out of
+     the default list — never out of the counts, the search or the summaries — and the fold
+     says how much it is holding, so the list never quietly disagrees with the tally above it. */
+  const foldingOlder = filter === "All" && metricFocus === "home-total" && !searchQuery.trim();
+  const olderDone = foldingOlder ? visible.filter(issue => isCompleteStatus(issue.status) && daysSince(completedAtOf(issue)) > 30) : [];
+  const olderDoneIds = new Set(olderDone.map(issue => issue.id));
+  const shownIssues = foldingOlder && !showOlderDone ? visible.filter(issue => !olderDoneIds.has(issue.id)) : visible;
   /* Derived rather than stored: the celebration is "you closed work today and the queue
      is empty", which is true for as long as it is true and gone tomorrow on its own. */
   const queueJustCleared = !focusRecommendations.length && completedToday.length > 0;
@@ -1128,11 +1170,11 @@ export default function Home() {
     }));
   }, [diaryEntries]);
   const calendarDays = useMemo(() => { const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1); const end = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0); return Array.from({ length: start.getDay() + end.getDate() }, (_, i) => i - start.getDay() + 1); }, [calendarMonth]);
-  const selectedIssues = issues.filter(i => dayKey(i.createdAt) === selectedDay);
+  const selectedIssues = issues.filter(i => i.expected && dayKey(i.expected) === selectedDay && !i.archivedAt);
   // Diary events sit beside issues on the calendar; only mood and title are shown, never the reflection.
   const selectedDiary = diaryLog.filter(event => dayKey(event.at) === selectedDay).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   const monthTitle = new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(calendarMonth);
-  const resolvedIssues = issues.filter(i => isCompleteStatus(i.status));
+  const resolvedIssues = currentIssues.filter(i => isCompleteStatus(i.status));
   const missingEtaIssues = issues.filter(issue => !isCompleteStatus(issue.status) && !issue.expected);
   const missingOutcomeIssues = resolvedIssues.filter(issue => !issue.outcome.trim());
   const memoryIssue = issues.find(issue => issue.id === memoryIssueId);
@@ -1151,7 +1193,6 @@ export default function Home() {
   const insightResolved = resolvedIssues.filter(issue => inInsightWindow(completedAtOf(issue)));
   const previousResolved = insightRange === "all" ? [] : resolvedIssues.filter(issue => inInsightWindow(completedAtOf(issue), true));
   const insightLogged = issues.filter(issue => inInsightWindow(issue.createdAt));
-  const previousLogged = insightRange === "all" ? [] : issues.filter(issue => inInsightWindow(issue.createdAt, true));
   const insightCompletedWithTime = insightResolved.filter(issue => issue.completedAt || issue.updates.length);
   const insightCompletionHours = insightCompletedWithTime.map(issue => (new Date(completedAtOf(issue)).getTime() - new Date(issue.createdAt).getTime()) / 3600000).filter(hours => hours >= 0);
   const insightAverageHours = insightCompletionHours.length ? insightCompletionHours.reduce((sum, hours) => sum + hours, 0) / insightCompletionHours.length : 0;
@@ -1178,14 +1219,7 @@ export default function Home() {
   const waitingIssues = issues.filter(issue => !isCompleteStatus(issue.status) && /waiting|blocked|pending|approval/i.test(issue.status));
   const staleIssues = issues.filter(issue => !isCompleteStatus(issue.status) && Date.now() - new Date(issue.updatedAt || issue.updates[issue.updates.length - 1]?.at || issue.createdAt).getTime() >= 3 * 86400000);
   const oldestActive = [...issues.filter(issue => !isCompleteStatus(issue.status))].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())[0];
-  /* Kept for the hidden legacy Insights markup while the new focused surface replaces it. */
-  const completedWithTime = resolvedIssues.filter(issue => issue.completedAt || issue.updates.length);
-  const completionHours = completedWithTime.map(issue => (new Date(completedAtOf(issue)).getTime() - new Date(issue.createdAt).getTime()) / 3600000).filter(hours => hours >= 0);
-  const averageHours = completionHours.length ? completionHours.reduce((sum, hours) => sum + hours, 0) / completionHours.length : 0;
-  const dueResolved = resolvedIssues.filter(issue => issue.expected && (issue.completedAt || issue.updates.length));
-  const onTimeCount = dueResolved.filter(issue => new Date(completedAtOf(issue)).getTime() <= new Date(issue.expected).getTime()).length;
-  const onTimeRate = dueResolved.length ? Math.round((onTimeCount / dueResolved.length) * 100) : 0;
-  const health = overdueCount > 0 || (dueResolved.length > 0 && onTimeRate < 80) ? "Needs improvement" : "Looking healthy";
+  /* Completion timing for the Insights surface. */
   const appName = profile ? `${profile.name}'s Signal Petal` : "Signal Petal";
   const commandNeedle = commandQuery.trim().toLowerCase();
   const commandIssues = commandNeedle ? issues.filter(issue => `${issue.title} ${issue.owner} ${issue.status}`.toLowerCase().includes(commandNeedle)).slice(0, 5) : [];
@@ -1195,7 +1229,7 @@ export default function Home() {
   const commandActions = ([["create", "＋", "Log a new signal", "N"], ["focus", "✦", "Open Focus now", "F"], ["check-in", "◷", "Start daily check-in", "D"], ["insights", "◌", "Open actionable insights", "I"], ["review", "▦", "Open weekly review", "W"], ["settings", "⚙", "Open settings", "S"]] as const).filter(([, , label]) => !commandNeedle || label.toLowerCase().includes(commandNeedle));
   /* One flat list, so ↑ ↓ and ↵ have something to walk. The palette footer advertised
      those keys from the day it shipped and nothing had ever implemented them. */
-  const commandItems: { key: string; group: string; icon: ReactNode; hint: string; label: string; run: () => void }[] = [
+  const commandItems: CommandItem[] = [
     ...commandActions.map(([id, icon, label, shortcut]) => ({ key: `action-${id}`, group: "QUICK ACTIONS", icon: icon === "✦" ? <Petal size={14}/> : icon, label, hint: shortcut, run: () => runCommand(id) })),
     ...commandIssues.map(issue => ({ key: `issue-${issue.id}`, group: "WORK ITEMS", icon: "↗", label: issue.title, hint: `${issue.owner} · ${issue.status}`, run: () => { setShowCommandPalette(false); openIssueDetail(issue.id); } })),
     ...commandDiary.map(entry => ({ key: `diary-${entry.id}`, group: "REFLECTIONS", icon: moods.find(mood => mood.value === entry.mood)?.symbol ?? "✎", label: entry.title || "Untitled reflection", hint: `${moodName(entry.mood)} · ${dateLabel(entry.at)}`, run: () => { setShowCommandPalette(false); setOpenDiaryId(entry.id); } })),
@@ -1208,7 +1242,7 @@ export default function Home() {
     else if (event.key === "Enter") { event.preventDefault(); commandItems[commandCursor]?.run(); }
   }
   const completionLabel = statuses.find(isCompleteStatus) || "Resolved";
-  const queueTitle = filter === "Mine" ? metricFocus === "mine-open" ? "My open actions" : metricFocus === "mine-overdue" ? "My overdue actions" : metricFocus === "mine-resolved" ? `My ${completionLabel.toLowerCase()} actions` : "All my actions" : filter === "Overdue" ? metricFocus === "attention-oldest" ? "Oldest delayed item" : metricFocus === "attention-owners" ? "Overdue work by owner" : metricFocus === "attention-first" ? "First move to make" : "All overdue work" : metricFocus === "home-total" ? "All tasks" : metricFocus === "home-resolved" ? completionLabel : metricFocus === "home-overdue" ? "Needs attention" : "Open work";
+  const queueTitle = filter === "Archive" ? "Archived tasks" : filter === "Mine" ? metricFocus === "mine-open" ? "My open actions" : metricFocus === "mine-overdue" ? "My overdue actions" : metricFocus === "mine-resolved" ? `My ${completionLabel.toLowerCase()} actions` : "All my actions" : filter === "Overdue" ? metricFocus === "attention-oldest" ? "Oldest delayed item" : metricFocus === "attention-owners" ? "Overdue work by owner" : metricFocus === "attention-first" ? "First move to make" : "All overdue work" : metricFocus === "home-total" ? "All tasks" : metricFocus === "home-resolved" ? completionLabel : metricFocus === "home-overdue" ? "Needs attention" : "Open work";
   const statusStyle = (status: Status) => ({ "--status-color": statusColors[status] || "#7a5aa6" } as CSSProperties);
 
   function updateIssue(patch: Partial<Issue>) {
@@ -1217,7 +1251,21 @@ export default function Home() {
     const justCompleted = Boolean(patch.status && isCompleteStatus(patch.status) && !isCompleteStatus(active.status));
     const completedAt = justCompleted ? updatedAt : patch.status && !isCompleteStatus(patch.status) ? undefined : active.completedAt;
     if (justCompleted) setWin({ title: active.title, span: spanLabel(active.createdAt, updatedAt) });
-    setIssues(items => items.map(i => i.id === active.id ? { ...i, ...patch, updatedAt, completedAt } : i));
+    setIssues(items => {
+      const updated = items.map(i => i.id === active.id ? { ...i, ...patch, updatedAt, completedAt } : i);
+      return justCompleted ? withNextRound(updated, active.id, new Date(updatedAt)) : updated;
+    });
+  }
+  /* Opening the next round belongs here rather than in each handler: work is closed out from
+     the detail panel and from the focus card, and a cadence that only fired from one of them
+     would be worse than none. Reopening and re-closing must not stack up duplicates either,
+     so an existing round pointing back at this task is the guard. */
+  function withNextRound(items: Issue[], finishedId: string, finishedAt: Date) {
+    const finished = items.find(item => item.id === finishedId);
+    if (!finished?.repeat) return items;
+    if (items.some(item => item.repeatedFrom === finishedId)) return items;
+    const next = nextOccurrence(finished, finishedAt, crypto.randomUUID());
+    return next ? [next, ...items] : items;
   }
   /* Title-casing a controlled input replaces the value React is holding, and React
      re-assigns input.value on commit, which parks the caret at the end. The transform
@@ -1239,7 +1287,34 @@ export default function Home() {
     field.value = next;
     if (caret !== null) field.setSelectionRange(caret, caret);
   }
-  function openIssueDetail(issueId: string) { setActiveId(issueId); setFollowUpInput(""); setShowDetail(true); }
+  function openIssueDetail(issueId: string, updateUrl = true) {
+    setActiveId(issueId); setFollowUpInput(""); setShowDetail(true);
+    if (updateUrl && window.location.pathname !== `/tasks/${encodeURIComponent(issueId)}`) window.history.pushState({ taskId: issueId }, "", `/tasks/${encodeURIComponent(issueId)}`);
+  }
+  function closeIssueDetail() {
+    setShowDetail(false);
+    if (window.location.pathname.startsWith("/tasks/")) window.history.pushState({}, "", "/");
+  }
+  function completeIssue(issue: Issue) {
+    const completionStatus = statuses.find(isCompleteStatus) || "Resolved";
+    const at = new Date().toISOString();
+    const before = issue;
+    setIssues(items => withNextRound(
+      items.map(item => item.id === issue.id ? { ...item, status: completionStatus, updatedAt: at, completedAt: at } : item),
+      issue.id,
+      new Date(at),
+    ));
+    setWin({ title: issue.title, span: spanLabel(issue.createdAt, at) });
+    /* Undo takes the next round back out with it, or undoing a completion quietly leaves
+       behind a task nobody asked for. */
+    offerUndo(`Completed “${issue.title}”.`, () => setIssues(items => items.filter(item => item.repeatedFrom !== before.id).map(item => item.id === before.id ? before : item)));
+  }
+  function archiveIssue(issue: Issue) { const archivedAt = new Date().toISOString(); setIssues(items => items.map(item => item.id === issue.id ? { ...item, archivedAt, updatedAt: archivedAt } : item)); closeIssueDetail(); offerUndo(`Archived “${issue.title}”.`, () => setIssues(items => items.map(item => item.id === issue.id ? { ...item, archivedAt: undefined } : item))); }
+  function restoreIssue(issue: Issue) { setIssues(items => items.map(item => item.id === issue.id ? { ...item, archivedAt: undefined, updatedAt: new Date().toISOString() } : item)); }
+  function removeIssue(issue: Issue) {
+    setActiveId(issue.id);
+    setShowDeleteConfirm(true);
+  }
   function openInsightQueue(kind: "overdue" | "eta" | "outcome") {
     if (kind === "overdue") { setSection("dashboard"); setFilter("Overdue"); setMetricFocus("attention-overdue"); return; }
     const issue = (kind === "eta" ? missingEtaIssues : missingOutcomeIssues)[0];
@@ -1405,9 +1480,9 @@ export default function Home() {
     try {
       const salt = toB64(crypto.getRandomValues(new Uint8Array(16)));
       const key = await deriveDiaryKey(lockPass, fromB64(salt));
-      localStorage.setItem("signal-petal-diary-vault", JSON.stringify(await sealDiary(key, salt, diaryEntries, diaryLog)));
-      localStorage.removeItem("signal-petal-diary");
-      localStorage.removeItem("signal-petal-diary-log");
+      writeStore("signal-petal-diary-vault", JSON.stringify(await sealDiary(key, salt, diaryEntries, diaryLog)));
+      dropStore("signal-petal-diary");
+      dropStore("signal-petal-diary-log");
       saltRef.current = salt;
       setDiaryKey(key);
       setLockOn(true);
@@ -1445,9 +1520,9 @@ export default function Home() {
   }
   function removeDiaryLock() {
     if (diaryLocked) return setLockMessage("Unlock the diary first, then the lock can be removed.");
-    localStorage.removeItem("signal-petal-diary-vault");
-    localStorage.setItem("signal-petal-diary", JSON.stringify(diaryEntries));
-    localStorage.setItem("signal-petal-diary-log", JSON.stringify(diaryLog));
+    dropStore("signal-petal-diary-vault");
+    writeStore("signal-petal-diary", JSON.stringify(diaryEntries));
+    writeStore("signal-petal-diary-log", JSON.stringify(diaryLog));
     saltRef.current = "";
     setDiaryKey(null);
     setLockOn(false);
@@ -1461,62 +1536,98 @@ export default function Home() {
   /* One set of facts, two registers. The professional text is built to be pasted into Teams
      or Slack with no editing pass: no app voice, no empty headings, nothing from the diary.
      The personal one stays plain. Unsorted work appears only in the combined copy. */
-  function professionalSummary(withHeading: boolean) {
-    if (!review || !reviewWeek) return "";
+  /* How much of a period a summary covers changes what belongs in it. Over a week, what
+     started and what is next are the living part. Over a quarter or a year nobody is reading
+     a to-do list — they want the record of what was delivered, so the forward-looking blocks
+     drop away and Delivered carries the weight. */
+  type Span = "week" | "long";
+
+  function deliveredBlock(shipped: Issue[], span: Span, done: (issue: Issue) => string) {
+    /* A year of work pasted whole is not a message anyone reads. The tail is named rather
+       than silently dropped, because a count that does not add up is worse than a long list. */
+    const cap = span === "long" ? 40 : shipped.length;
+    const shown = shipped.slice(0, cap);
+    const items = shown.map(done);
+    if (shipped.length > shown.length) items.push(`\u2026 and ${shipped.length - shown.length} more`);
+    return items;
+  }
+
+  function professionalSummary(work: PeriodWork, heading: string, span: Span) {
     const mine = (items: Issue[]) => items.filter(issue => issue.lane === "professional");
-    const shipped = mine(review.shipped), stalled = mine(review.stalled), parked = mine(review.parkedIssues);
-    /* Each item is named once, and the sections claim it in order of how much they say:
-       what shipped, what is stuck, what is next, and only then what merely started. Next
-       week's focus keeps its items; "started this week" gives up the overlap, because it
-       is the line a reader loses least by not seeing twice. */
+    const shipped = mine(work.shipped), stalled = mine(work.stalled), parked = mine(work.parkedIssues);
+    /* Each item is named once, and the sections claim it in order of how much they say. Next
+       week's focus keeps its items; "started" gives up the overlap, because that is the line
+       a reader loses least by not seeing twice. */
     const named = new Set([...shipped, ...stalled].map(issue => issue.id));
-    const priorities = mine(review.priorities).filter(issue => !named.has(issue.id));
+    const priorities = span === "week" ? mine(work.priorities).filter(issue => !named.has(issue.id)) : [];
     priorities.forEach(issue => named.add(issue.id));
-    const logged = mine(review.logged).filter(issue => !named.has(issue.id));
+    const logged = span === "week" ? mine(work.logged).filter(issue => !named.has(issue.id)) : [];
     const body = renderBlocks([
-      { heading: `Delivered (${shipped.length})`, items: shipped.map(issue => `\u2022 ${professionalLine({ shareable: issue.memory?.shareable, title: issue.title, outcome: issue.outcome })}`) },
+      { heading: `Delivered (${shipped.length})`, items: deliveredBlock(shipped, span, issue => `\u2022 ${professionalLine({ shareable: issue.memory?.shareable, title: issue.title, outcome: issue.outcome })}`) },
       { heading: "In progress", items: stalled.map(issue => `\u2022 ${professionalTone(issue.title)} \u2014 ${overdueSpan(daysOverdue(issue))} past its due date${issue.followUpPeople.length ? `, awaiting input from ${issue.followUpPeople.join(", ")}` : ""}`) },
       { heading: "", items: (shipped.length || logged.length) && !stalled.length ? ["Nothing is currently past its due date."] : [] },
       { heading: "Started this week", items: logged.map(issue => `\u2022 ${professionalTone(issue.title)}`) },
       { heading: "Focus for next week", items: priorities.map(issue => `\u2022 ${professionalTone(issue.title)} \u2014 ${professionalTone(issue.action) || "next step still to be set"}`) },
-      { heading: "Deliberately deferred", items: parked.map(issue => `\u2022 ${professionalTone(issue.title)}`) },
+      { heading: "Deliberately deferred", items: span === "week" ? parked.map(issue => `\u2022 ${professionalTone(issue.title)}`) : [] },
     ]);
-    const learnings = reviewTakeaway ? shipped.map(issue => professionalTone(issue.memory?.learning ?? "")).filter(Boolean).slice(0, 2) : [];
+    const learnings = reviewTakeaway ? shipped.map(issue => professionalTone(issue.memory?.learning ?? "")).filter(Boolean).slice(0, span === "long" ? 3 : 2) : [];
     const takeaway = learnings.length ? `Takeaway\n${learnings.map(text => learnings.length > 1 ? `\u2022 ${text}` : text).join("\n")}` : "";
-    const heading = review.isRecent ? `Weekly update \u00b7 last 7 days (${weekLabel(new Date(review.from))})` : `Weekly update \u00b7 ${weekLabel(reviewWeek)}`;
-    return [withHeading ? heading : "", body || "Nothing is marked professional for this period.", takeaway].filter(Boolean).join("\n\n");
+    return [heading, body || "Nothing is marked professional for this period.", takeaway].filter(Boolean).join("\n\n");
   }
-  function personalSummary(withHeading: boolean) {
-    if (!review || !reviewWeek) return "";
+
+  function personalSummary(work: PeriodWork, heading: string, span: Span) {
     const mine = (items: Issue[]) => items.filter(issue => issue.lane === "personal");
-    const shipped = mine(review.shipped), stalled = mine(review.stalled), parked = mine(review.parkedIssues);
-    /* Each item is named once, and the sections claim it in order of how much they say:
-       what shipped, what is stuck, what is next, and only then what merely started. Next
-       week's focus keeps its items; "started this week" gives up the overlap, because it
-       is the line a reader loses least by not seeing twice. */
+    const shipped = mine(work.shipped), stalled = mine(work.stalled), parked = mine(work.parkedIssues);
     const named = new Set([...shipped, ...stalled].map(issue => issue.id));
-    const priorities = mine(review.priorities).filter(issue => !named.has(issue.id));
+    const priorities = span === "week" ? mine(work.priorities).filter(issue => !named.has(issue.id)) : [];
     priorities.forEach(issue => named.add(issue.id));
-    const logged = mine(review.logged).filter(issue => !named.has(issue.id));
+    const logged = span === "week" ? mine(work.logged).filter(issue => !named.has(issue.id)) : [];
     const body = renderBlocks([
-      { heading: "Done", items: shipped.map(issue => `\u2022 ${issue.title}${issue.outcome.trim() ? ` \u2014 ${issue.outcome.trim()}` : ""}`) },
+      { heading: "Done", items: deliveredBlock(shipped, span, issue => `\u2022 ${issue.title}${issue.outcome.trim() ? ` \u2014 ${issue.outcome.trim()}` : ""}`) },
       { heading: "Still going", items: stalled.map(issue => `\u2022 ${issue.title} \u2014 ${overdueSpan(daysOverdue(issue))} past when you wanted it done`) },
       { heading: "New this week", items: logged.map(issue => `\u2022 ${issue.title}`) },
       { heading: "Next", items: priorities.map(issue => `\u2022 ${issue.title}`) },
-      { heading: "Can wait", items: parked.map(issue => `\u2022 ${issue.title}`) },
+      { heading: "Can wait", items: span === "week" ? parked.map(issue => `\u2022 ${issue.title}`) : [] },
     ]);
     // Deliberately a count, never the words — the same rule the whole summary has always had.
-    const reflections = review.pages.length ? `${review.pages.length} reflection${review.pages.length === 1 ? "" : "s"} written this week. The words themselves are not in here.` : "";
-    const heading = review.isRecent ? `The last 7 days \u00b7 ${weekLabel(new Date(review.from))}` : `This week \u00b7 ${weekLabel(reviewWeek)}`;
-    return [withHeading ? heading : "", body || "Nothing is marked personal for this period.", reflections].filter(Boolean).join("\n\n");
+    const reflections = work.pages.length ? `${work.pages.length} reflection${work.pages.length === 1 ? "" : "s"} written. The words themselves are not in here.` : "";
+    return [heading, body || "Nothing is marked personal for this period.", reflections].filter(Boolean).join("\n\n");
   }
+
+  /* The window a copy covers. The week follows whatever the review is showing; the longer
+     periods run from their own start up to now, because a quarter you are still in is the
+     one worth reporting. */
+  function copyWindow() {
+    const now = new Date();
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    if (copyPeriod === "quarter") {
+      const start = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+      const months = new Intl.DateTimeFormat("en", { month: "short" });
+      return { from: start.getTime(), to: endOfToday, span: "long" as const,
+        label: `${months.format(start)}\u2013${months.format(now)} ${now.getFullYear()}` };
+    }
+    if (copyPeriod === "year") {
+      const start = new Date(now.getFullYear(), 0, 1);
+      return { from: start.getTime(), to: endOfToday, span: "long" as const, label: String(now.getFullYear()) };
+    }
+    return { from: review!.from, to: review!.to, span: "week" as const,
+      label: review!.isRecent ? `last 7 days (${weekLabel(new Date(review!.from))})` : weekLabel(reviewWeek!) };
+  }
+
   function buildReviewSummary(scope: "professional" | "personal" | "both") {
     if (!review || !reviewWeek) return "";
-    if (scope === "professional") return professionalSummary(true);
-    if (scope === "personal") return personalSummary(true);
-    const heading = review.isRecent ? `The last 7 days \u00b7 ${weekLabel(new Date(review.from))}` : `Week of ${weekLabel(reviewWeek)}`;
-    const unsorted = review.unsorted.length ? `NOT SORTED YET\n${review.unsorted.map(issue => `\u2022 ${issue.title}`).join("\n")}\n\nMark each one professional or personal to have it counted above.` : "";
-    return [heading, `PROFESSIONAL\n${professionalSummary(false)}`, `PERSONAL\n${personalSummary(false)}`, unsorted].filter(Boolean).join("\n\n");
+    const period = copyWindow();
+    const work = copyPeriod === "week" ? review : workInPeriod(issues, diaryEntries, dailyCheckIns, period.from, period.to);
+    const title = copyPeriod === "week" ? "Weekly update" : copyPeriod === "quarter" ? "Quarter to date" : "Year to date";
+    if (scope === "professional") return professionalSummary(work, `${title} \u00b7 ${period.label}`, period.span);
+    if (scope === "personal") return personalSummary(work, `${copyPeriod === "week" ? "This week" : title} \u00b7 ${period.label}`, period.span);
+    const unsorted = work.unsorted.length
+      ? `NOT SORTED YET\n${work.unsorted.map(issue => `\u2022 ${issue.title}`).join("\n")}\n\nMark each one professional or personal to have it counted above.`
+      : "";
+    return [`${title} \u00b7 ${period.label}`,
+      `PROFESSIONAL\n${professionalSummary(work, "", period.span)}`,
+      `PERSONAL\n${personalSummary(work, "", period.span)}`,
+      unsorted].filter(Boolean).join("\n\n");
   }
   async function copyReviewSummary(scope: "professional" | "personal" | "both") {
     if (!review || !reviewWeek) return;
@@ -1541,7 +1652,12 @@ export default function Home() {
   function markBackedUp() {
     const at = new Date().toISOString();
     setLastBackup(at);
-    localStorage.setItem("signal-petal-last-backup", at);
+    writeStore("signal-petal-last-backup", at);
+  }
+  function snoozeBackupNudge() {
+    const at = new Date().toISOString();
+    setBackupSnoozed(at);
+    writeStore("signal-petal-backup-snoozed", at);
   }
   function downloadBackup() {
     saveBackupFile(currentPayload());
@@ -1599,7 +1715,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/sync", { method: "DELETE" });
       if (!response.ok && response.status !== 401) throw new Error("Cloud reset failed");
-      Object.keys(localStorage).filter(key => key.startsWith("signal-petal-")).forEach(key => localStorage.removeItem(key));
+      Object.keys(localStorage).filter(key => key.startsWith("signal-petal-")).forEach(key => dropStore(key));
       location.reload();
     } catch {
       setResetBusy(false);
@@ -1608,9 +1724,11 @@ export default function Home() {
     }
   }
   function addUpdate(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const text = String(form.get("update") || "").trim(); if (!text || !active) return; updateIssue({ updates: [...active.updates, { id: crypto.randomUUID(), at: new Date().toISOString(), author: personalOwner, text }] }); event.currentTarget.reset(); }
-  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const title = String(form.get("title")); const details = String(form.get("details")); const updates = [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }]; const issue: Issue = { id: crypto.randomUUID(), title, details, owner: titleCaseName(String(form.get("owner")).trim()) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, updatedAt: now, status: "New", outcome: "", lane: newLane, followUpPeople: newFollowUps, updates }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setNewLane(undefined); setShowCreate(false); setShowDetail(true); }
-  function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = titleCaseName(String(form.get("name") || "").trim()); const role = String(form.get("role") || "").trim(); if (name && role) { setProfile({ name, role }); if (localStorage.getItem("signal-petal-onboarding-complete") !== "true") { setOnboardingStep(0); setShowOnboarding(true); } } }
-  function finishOnboarding(action?: "create" | "focus" | "check-in") { localStorage.setItem("signal-petal-onboarding-complete", "true"); setShowOnboarding(false); if (action === "create") openCreate(); else if (action === "focus") { setSection("dashboard"); setFilter("All"); } else if (action === "check-in") openDailyCheckIn(); }
+  function addIssue(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const now = new Date().toISOString(); const title = String(form.get("title")); const details = String(form.get("details")); const updates = [{ id: crypto.randomUUID(), at: now, author: personalOwner, text: "Issue logged." }]; const issue: Issue = { id: crypto.randomUUID(), title, details, owner: titleCaseName(String(form.get("owner")).trim()) || personalOwner, action: String(form.get("action")), expected: String(form.get("expected")), createdAt: now, updatedAt: now, status: String(form.get("status") || "New"), outcome: "", lane: newLane, priority: String(form.get("priority") || "medium") as Issue["priority"], category: String(form.get("category") || "").trim(), followUpPeople: newFollowUps, updates }; setIssues(items => [issue, ...items]); setActiveId(issue.id); setNewFollowUps([]); setNewFollowUpInput(""); setNewLane(undefined); setShowCreate(false); setShowDetail(true); }
+  function saveProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = titleCaseName(String(form.get("name") || "").trim()); const role = String(form.get("role") || "").trim(); if (name && role) { setProfile({ name, role }); if (readStore("signal-petal-onboarding-complete") !== "true") { setOnboardingStep(0); setShowOnboarding(true); } } }
+  function updateProfile(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); const name = titleCaseName(String(form.get("name") || "").trim()); const role = String(form.get("role") || "").trim(); if (name && role) setProfile({ name, role }); }
+  function replayOnboarding() { setOnboardingStep(0); setShowOnboarding(true); }
+  function finishOnboarding(action?: "create" | "focus" | "check-in") { writeStore("signal-petal-onboarding-complete", "true"); setShowOnboarding(false); if (action === "create") openCreate(); else if (action === "focus") { setSection("dashboard"); setFilter("All"); } else if (action === "check-in") openDailyCheckIn(); }
   function runCommand(command: "create" | "focus" | "check-in" | "review" | "insights" | "settings") { setShowCommandPalette(false); setCommandIndex(0); if (command === "create") openCreate(); else if (command === "focus") { setSection("dashboard"); setFilter("All"); setMetricFocus("home-total"); } else if (command === "check-in") openDailyCheckIn(); else if (command === "review") setSection("review"); else if (command === "insights") setSection("metrics"); else openSettings(); }
   async function requestNotificationPermission() {
     if (!("Notification" in window)) { setReminderFeedback("This browser does not support web notifications."); return "unsupported" as const; }
@@ -1664,7 +1782,7 @@ export default function Home() {
     setEditDraft({ title: entry.title, text: entry.text, mood: entry.mood, issueIds: entry.issueIds ?? [] });
   }
   function cancelDiaryEdit() { setEditingDiaryId(""); }
-  function saveDiaryEdit(event: FormEvent<HTMLFormElement>, entry: DiaryEntry, index: number) {
+  function saveDiaryEdit(event: FormEvent<HTMLFormElement>, entry: DiaryEntry) {
     event.preventDefault();
     const text = editDraft.text.trim();
     if (!text) return;
@@ -1697,8 +1815,10 @@ export default function Home() {
     </aside>
     <button className="command-trigger" type="button" onClick={() => { setCommandQuery(""); setCommandIndex(0); setShowCommandPalette(true); }} aria-label="Open command palette">⌘ K</button>
     <section className={`workspace ${section === "dashboard" ? `view-${dashboardView}` : ""}`}>
+      {storageTrouble && <div className="data-alarm" role="alert"><div><strong>{storageTrouble.reason === "full" ? "This browser has run out of room." : "This browser is not letting anything be saved."}</strong><p>{storageTrouble.reason === "full" ? "Your last change is on screen but it has not been saved, and nothing new can be saved until there is space here. Save a backup file now \u2014 that copy is the one that survives." : "Your changes are on screen, but nothing is reaching storage, so they will be gone when this tab closes. Save a backup file now."}</p></div><button className="primary" type="button" onClick={downloadBackup}>Save backup file</button></div>}
+      {!storageTrouble && backupDue && <div className="data-nudge"><div><strong>{backupAge === null ? "You have not saved a backup yet." : `Your last backup was ${backupAge} days ago.`}</strong><p>Everything here lives in this browser. A backup file is the copy that survives it being cleared.</p></div><div className="data-nudge-actions"><button className="secondary" type="button" onClick={snoozeBackupNudge}>Not now</button><button className="primary" type="button" onClick={downloadBackup}>Save backup file</button></div></div>}
       <header><div><p className="eyebrow">{section === "dashboard" && filter === "Mine" ? "PERSONAL FOCUS" : section === "dashboard" && filter === "Overdue" ? "TRIAGE MODE" : section === "diary" ? "PRIVATE REFLECTIONS" : section === "settings" ? "WORKSPACE PREFERENCES" : profile ? `${profile.name.toUpperCase()}'S WORKSPACE` : "YOUR WORKSPACE"}</p><h1>{pageTitle}{titleMark && <Petal className="title-petal" size={24}/>}</h1><p className="subhead">{pageDescription}</p></div>{section !== "settings" && section !== "diary" && section !== "review" && <div className="header-actions"><button className="primary" type="button" onClick={openCreate}>+ Log/Track</button></div>}</header>
-      {section === "dashboard" && <>{filter === "All" && <p className="day-line">{todayLine}</p>}<section className="metric-row dashboard-switcher" aria-label="Dashboard views"><button className={`metric-card ${filter === "All" && metricFocus === "home-total" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "All" && metricFocus === "home-total"} onClick={() => { setFilter("All"); setMetricFocus("home-total"); }}><span>All tasks</span><strong>{issues.length}</strong><small>Across every status and owner</small></button><button className={`metric-card personal ${filter === "Mine" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "Mine"} onClick={() => { setFilter("Mine"); setMetricFocus("mine-total"); }}><span>My actions</span><strong>{mine.length}</strong><small>Assigned directly to you</small></button><button className={`metric-card warm urgent ${filter === "Overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "Overdue"} onClick={() => { setFilter("Overdue"); setMetricFocus("attention-overdue"); }}><span>Needs attention</span><strong>{overdueCount}</strong><small>{overdueCount ? "Past the expected update" : "Everything is on track"}</small></button><button className={`metric-card ${filter === "All" && metricFocus === "home-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "All" && metricFocus === "home-resolved"} onClick={() => { setFilter("All"); setMetricFocus("home-resolved"); }}><span>{completionLabel}</span><strong>{resolvedIssues.length}</strong><small>Outcomes documented</small></button><button className={`metric-card check-in-card ${todayCheckIn ? "good" : ""}`} type="button" onClick={openDailyCheckIn}><span>Next check-in</span><strong>{todayCheckIn ? "Done" : "Today"}</strong><small>{todayCheckIn ? "Daily brief completed" : `Daily wrap-up at ${reminderTime}`}</small></button></section><section className="metric-row dashboard-view-metrics">{filter === "Mine" ? <><button className={`metric-card personal ${metricFocus === "mine-open" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-open"} onClick={() => setMetricFocus("mine-open")}><span>My open actions</span><strong>{mineOpen.length}</strong><small>Assigned directly to you</small></button><button className={`metric-card ${mineOverdue.length ? "warm" : "good"} ${metricFocus === "mine-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-overdue"} onClick={() => setMetricFocus("mine-overdue")}><span>My overdue</span><strong>{mineOverdue.length}</strong><small>{mineOverdue.length ? "Needs your follow-up" : "Your work is on track"}</small></button><button className={`metric-card ${metricFocus === "mine-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-resolved"} onClick={() => setMetricFocus("mine-resolved")}><span>My {completionLabel.toLowerCase()}</span><strong>{mineResolved.length}</strong><small>Personal outcomes captured</small></button><button className={`metric-card ${metricFocus === "mine-total" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-total"} onClick={() => setMetricFocus("mine-total")}><span>My total</span><strong>{mine.length}</strong><small>Across every status</small></button></> : filter === "Overdue" ? <><button className={`metric-card urgent ${metricFocus === "attention-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-overdue"} onClick={() => setMetricFocus("attention-overdue")}><span>Overdue now</span><strong>{overdueCount}</strong><small>Past expected update</small></button><button className={`metric-card warm ${metricFocus === "attention-oldest" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-oldest"} onClick={() => setMetricFocus("attention-oldest")}><span>Oldest delay</span><strong>{attentionQueue.length ? daysOverdue(attentionQueue[0]) : 0}d</strong><small>{attentionQueue.length ? attentionQueue[0].title : "Nothing is overdue"}</small></button><button className={`metric-card ${metricFocus === "attention-owners" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-owners"} onClick={() => setMetricFocus("attention-owners")}><span>Owners affected</span><strong>{new Set(attentionQueue.map(i => i.owner)).size}</strong><small>People needing follow-up</small></button><button className={`metric-card ${metricFocus === "attention-first" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-first"} onClick={() => setMetricFocus("attention-first")}><span>First move</span><strong>{attentionQueue.length ? "Now" : "Clear"}</strong><small>{attentionQueue.length ? "Start with the oldest item" : "No triage needed"}</small></button></> : <><button className={`metric-card ${metricFocus === "home-open" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-open"} onClick={() => setMetricFocus("home-open")}><span>Open work</span><strong>{openCount}</strong><small>Across your active issues</small></button><button className={`metric-card warm ${metricFocus === "home-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-overdue"} onClick={() => setMetricFocus("home-overdue")}><span>Needs attention</span><strong>{overdueCount}</strong><small>{overdueCount ? "Past its expected update" : "Everything is on track"}</small></button><button className={`metric-card ${metricFocus === "home-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-resolved"} onClick={() => setMetricFocus("home-resolved")}><span>{completionLabel}</span><strong>{resolvedIssues.length}</strong><small>Outcomes documented</small></button><article><span>Next check-in</span><strong>Today</strong><small>Daily wrap-up at 4:30 PM</small></article></>}</section>
+      {section === "dashboard" && <>{filter === "All" && <p className="day-line">{todayLine}</p>}<section className="metric-row dashboard-switcher" aria-label="Dashboard views"><button className={`metric-card ${filter === "All" && metricFocus === "home-total" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "All" && metricFocus === "home-total"} onClick={() => { setFilter("All"); setMetricFocus("home-total"); }}><span>All tasks</span><strong>{currentIssues.length}</strong><small>Across every status and owner</small></button><button className={`metric-card personal ${filter === "Mine" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "Mine"} onClick={() => { setFilter("Mine"); setMetricFocus("mine-total"); }}><span>My actions</span><strong>{mine.length}</strong><small>Assigned directly to you</small></button><button className={`metric-card warm urgent ${filter === "Overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "Overdue"} onClick={() => { setFilter("Overdue"); setMetricFocus("attention-overdue"); }}><span>Needs attention</span><strong>{overdueCount}</strong><small>{overdueCount ? "Past the expected update" : "Everything is on track"}</small></button><button className={`metric-card ${filter === "All" && metricFocus === "home-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={filter === "All" && metricFocus === "home-resolved"} onClick={() => { setFilter("All"); setMetricFocus("home-resolved"); }}><span>{completionLabel}</span><strong>{resolvedIssues.length}</strong><small>Outcomes documented</small></button><button className={`metric-card check-in-card ${todayCheckIn ? "good" : ""}`} type="button" onClick={openDailyCheckIn}><span>Next check-in</span><strong>{todayCheckIn ? "Done" : "Today"}</strong><small>{todayCheckIn ? "Daily brief completed" : `Daily wrap-up at ${reminderTime}`}</small></button></section><section className="metric-row dashboard-view-metrics">{filter === "Mine" ? <><button className={`metric-card personal ${metricFocus === "mine-open" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-open"} onClick={() => setMetricFocus("mine-open")}><span>My open actions</span><strong>{mineOpen.length}</strong><small>Assigned directly to you</small></button><button className={`metric-card ${mineOverdue.length ? "warm" : "good"} ${metricFocus === "mine-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-overdue"} onClick={() => setMetricFocus("mine-overdue")}><span>My overdue</span><strong>{mineOverdue.length}</strong><small>{mineOverdue.length ? "Needs your follow-up" : "Your work is on track"}</small></button><button className={`metric-card ${metricFocus === "mine-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-resolved"} onClick={() => setMetricFocus("mine-resolved")}><span>My {completionLabel.toLowerCase()}</span><strong>{mineResolved.length}</strong><small>Personal outcomes captured</small></button><button className={`metric-card ${metricFocus === "mine-total" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "mine-total"} onClick={() => setMetricFocus("mine-total")}><span>My total</span><strong>{mine.length}</strong><small>Across every status</small></button></> : filter === "Overdue" ? <><button className={`metric-card urgent ${metricFocus === "attention-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-overdue"} onClick={() => setMetricFocus("attention-overdue")}><span>Overdue now</span><strong>{overdueCount}</strong><small>Past expected update</small></button><button className={`metric-card warm ${metricFocus === "attention-oldest" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-oldest"} onClick={() => setMetricFocus("attention-oldest")}><span>Oldest delay</span><strong>{attentionQueue.length ? daysOverdue(attentionQueue[0]) : 0}d</strong><small>{attentionQueue.length ? attentionQueue[0].title : "Nothing is overdue"}</small></button><button className={`metric-card ${metricFocus === "attention-owners" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-owners"} onClick={() => setMetricFocus("attention-owners")}><span>Owners affected</span><strong>{new Set(attentionQueue.map(i => i.owner)).size}</strong><small>People needing follow-up</small></button><button className={`metric-card ${metricFocus === "attention-first" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "attention-first"} onClick={() => setMetricFocus("attention-first")}><span>First move</span><strong>{attentionQueue.length ? "Now" : "Clear"}</strong><small>{attentionQueue.length ? "Start with the oldest item" : "No triage needed"}</small></button></> : <><button className={`metric-card ${metricFocus === "home-open" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-open"} onClick={() => setMetricFocus("home-open")}><span>Open work</span><strong>{openCount}</strong><small>Across your active issues</small></button><button className={`metric-card warm ${metricFocus === "home-overdue" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-overdue"} onClick={() => setMetricFocus("home-overdue")}><span>Needs attention</span><strong>{overdueCount}</strong><small>{overdueCount ? "Past its expected update" : "Everything is on track"}</small></button><button className={`metric-card ${metricFocus === "home-resolved" ? "metric-selected" : ""}`} type="button" aria-pressed={metricFocus === "home-resolved"} onClick={() => setMetricFocus("home-resolved")}><span>{completionLabel}</span><strong>{resolvedIssues.length}</strong><small>Outcomes documented</small></button><article><span>Next check-in</span><strong>Today</strong><small>Daily wrap-up at 4:30 PM</small></article></>}</section>
       {filter === "All" && <section className="garden-card" aria-labelledby="garden-title"><div className="garden-copy"><p className="eyebrow">TODAY’S SIGNAL GARDEN</p><h2 id="garden-title">{gardenStage === 4 ? "Today is in full bloom" : gardenStage ? "Your day is taking root" : "Plant the first signal"}</h2><p>{gardenStage === 4 ? "You moved work, closed a loop, checked in, and made room to reflect." : "Each meaningful loop adds something—without points, pressure, or a perfect-day requirement."}</p><div className="garden-milestones"><span className={dailyMovesDone ? "is-grown" : ""}>Focus move</span><span className={completedToday.length ? "is-grown" : ""}>Closed loop</span><span className={todayCheckIn ? "is-grown" : ""}>Checked in</span><span className={wroteToday ? "is-grown" : ""}>Reflected</span></div></div><SignalGarden stage={gardenStage} label={`Today’s Signal Garden is at stage ${gardenStage} of 4`}/></section>}
       {filter === "All" && <section className={`focus-now ${focusRecommendations.length ? "has-focus" : "is-clear"} ${queueJustCleared ? "just-cleared" : ""}`} aria-labelledby="focus-now-title">
         <div className="focus-now-intro">{queueJustCleared && <span className="cleared-mark" aria-hidden="true">✓</span>}<p className="eyebrow">{queueJustCleared ? "QUEUE CLEAR" : "TODAY’S THREE MOVES"}</p><h2 id="focus-now-title">{focusRecommendations.length ? "The next moves that matter" : queueJustCleared ? "You cleared it." : "Your queue is in good shape"}</h2><div className="focus-progress" aria-label={`${dailyMovesDone} of 3 focus moves handled`}><span>{[0,1,2].map(step => <i className={step < dailyMovesDone ? "is-done" : ""} key={step}/>)}</span><strong>{dailyMovesDone} of 3 handled</strong></div><p>{focusRecommendations.length ? "Signal Petal ranked these by urgency and clarity, so you can move the queue without rereading everything." : queueJustCleared ? "Nothing overdue, nothing without a next move, and work actually left the queue today." : "Every active item has a clear next move and nothing is overdue."}</p>{queueJustCleared && <p className="cleared-note"><strong>{completedToday.length} closed today:</strong> {completedToday.slice(0, 3).map(issue => clip(issue.title, 34)).join(" · ")}{completedToday.length > 3 ? ` and ${completedToday.length - 3} more` : ""}</p>}</div>
@@ -1710,77 +1830,11 @@ export default function Home() {
         {focusRecommendations.length > 0 && <button className="focus-all" type="button" onClick={() => { if (overdueCount) { setFilter("Overdue"); setMetricFocus("attention-overdue"); } else openIssueDetail(focusRecommendations[0].issue.id); }}>{overdueCount ? "Open triage queue" : "Review first signal"} <span aria-hidden="true">→</span></button>}
       </section>}
       <section className="content-grid">
-        <div className={`issue-panel issue-panel-${dashboardView}`}><div className="section-heading"><div><p className="eyebrow">{filter === "Mine" ? "PERSONAL QUEUE" : filter === "Overdue" ? "PRIORITY QUEUE" : "WORK QUEUE"}</p><h2>{queueTitle}</h2></div><div className="filter-pills">{(["All", "Mine", "Overdue"] as const).map(f => <button className={filter === f ? "selected" : ""} onClick={() => { setFilter(f); setMetricFocus(f === "Mine" ? "mine-total" : f === "Overdue" ? "attention-overdue" : "home-open"); }} key={f}>{f === "All" ? "Open" : f}</button>)}</div></div><div className="task-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search tasks" placeholder="Search tasks, owners, statuses, or follow-up people…" value={searchQuery} onChange={event => setSearchQuery(event.target.value)}/>{searchQuery && <button type="button" onClick={() => setSearchQuery("")} aria-label="Clear task search">Clear</button>}<small aria-live="polite">{visible.length} {visible.length === 1 ? "result" : "results"}</small></div><div className="issue-list">{visible.map(issue => <button key={issue.id} className={`issue-card ${issue.id === activeId ? "active" : ""}`} onClick={() => openIssueDetail(issue.id)}><div><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><h3>{issue.title}</h3><p>{issue.action || issue.details}</p>{issue.followUpPeople.length > 0 && <small className="issue-card-people">Follow up: {issue.followUpPeople.join(", ")}</small>}</div><div className="issue-meta"><span className={isOverdue(issue) ? "due overdue" : "due"}>{isOverdue(issue) ? "Overdue · " : "Due · "}{dateLabel(issue.expected)}</span><span>{issue.owner}</span>{issue.followUpPeople.length > 0 && <em>{issue.followUpPeople.length} follow-up {issue.followUpPeople.length === 1 ? "person" : "people"}</em>}</div></button>)}{!visible.length && <div className="empty">{searchQuery.trim() ? `No tasks match “${searchQuery.trim()}”.` : filter === "Mine" ? "No actions match this selection." : filter === "Overdue" || metricFocus === "home-overdue" ? "Nothing needs attention—every active item is on track." : metricFocus === "home-resolved" ? `No ${completionLabel.toLowerCase()} work yet.` : "No open work—your queue is looking beautifully clear."}</div>}</div></div>
+        <div className={`issue-panel issue-panel-${dashboardView}`}><div className="section-heading"><div><p className="eyebrow">{filter === "Mine" ? "PERSONAL QUEUE" : filter === "Overdue" ? "PRIORITY QUEUE" : "WORK QUEUE"}</p><h2>{queueTitle}</h2></div><div className="filter-pills">{(["All", "Mine", "Overdue", "Archive"] as const).map(f => <button className={filter === f && (f !== "All" || metricFocus === "home-open") ? "selected" : ""} onClick={() => { setFilter(f); setMetricFocus(f === "Mine" ? "mine-total" : f === "Overdue" ? "attention-overdue" : "home-open"); }} key={f}>{f === "All" ? metricFocus === "home-total" ? "All" : metricFocus === "home-resolved" ? completionLabel : "Open" : f}</button>)}</div></div><div className="task-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search tasks" placeholder="Search tasks, owners, statuses, or follow-up people…" value={searchQuery} onChange={event => setSearchQuery(event.target.value)}/>{searchQuery && <button type="button" onClick={() => setSearchQuery("")} aria-label="Clear task search">Clear</button>}<small aria-live="polite">{visible.length} {visible.length === 1 ? "result" : "results"}</small></div><div className="issue-list">{shownIssues.map(issue => <article key={issue.id} className={`issue-card ${issue.id === activeId ? "active" : ""}`}><button className="issue-card-main" type="button" onClick={() => openIssueDetail(issue.id)}><div><TaskBadges issue={issue} statusColors={statusColors}/><h3>{issue.title}</h3><p>{issue.action || issue.details}</p>{issue.followUpPeople.length > 0 && <small className="issue-card-people">Follow up: {issue.followUpPeople.join(", ")}</small>}</div><div className="issue-meta"><span className={isOverdue(issue) ? "due overdue" : "due"}>{isOverdue(issue) ? "Overdue · " : "Due · "}{dateLabel(issue.expected)}</span><span>{issue.owner}</span><em>{issue.followUpPeople.length > 0 ? `${issue.followUpPeople.length} follow-up ${issue.followUpPeople.length === 1 ? "person" : "people"}` : ""}</em></div></button><TaskActionControls issue={issue} onComplete={completeIssue} onDelete={removeIssue} onRestore={restoreIssue}/></article>)}{olderDone.length > 0 && <div className="older-done">{showOlderDone ? <button type="button" onClick={() => setShowOlderDone(false)}>Hide the {olderDone.length} older finished item{olderDone.length === 1 ? "" : "s"}</button> : <button type="button" onClick={() => setShowOlderDone(true)}>Show {olderDone.length} older finished item{olderDone.length === 1 ? "" : "s"}</button>}<small>Finished more than a month ago. Still counted above, still searchable, still in your summaries.</small></div>}{!visible.length && <div className="empty">{searchQuery.trim() ? `No tasks match “${searchQuery.trim()}”.` : filter === "Mine" ? "No actions match this selection." : filter === "Overdue" || metricFocus === "home-overdue" ? "Nothing needs attention—every active item is on track." : metricFocus === "home-resolved" ? `No ${completionLabel.toLowerCase()} work yet.` : "No open work—your queue is looking beautifully clear."}</div>}</div></div>
         <aside className={`report-panel report-${dashboardView}`}>{filter === "Mine" ? <><p className="eyebrow">PERSONAL SNAPSHOT</p><h2>Your workload</h2><div className="focus-stat"><span>In progress</span><strong>{mineOpen.length}</strong></div><div className="focus-stat"><span>Overdue</span><strong>{mineOverdue.length}</strong></div><div className="focus-stat"><span>Completed</span><strong>{mineResolved.length}</strong></div><div className="report-divider"/><p className="eyebrow">FOCUS PROMPT</p><p className="report-note">Choose one clear next action, add an update, and keep your personal queue moving.</p></> : filter === "Overdue" ? <><p className="eyebrow">TRIAGE ORDER</p><h2>Oldest first</h2><div className="triage-list">{attentionQueue.slice(0, 3).map((issue, index) => <button key={issue.id} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><em>{index + 1}</em><span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.expected)}</small></span></button>)}{!attentionQueue.length && <p className="report-note">Your priority queue is clear.</p>}</div><div className="report-divider"/><p className="eyebrow">RECOVERY RHYTHM</p><p className="report-note">Confirm the owner, record the next step, and reset the expected update.</p></> : <><p className="eyebrow">AT A GLANCE</p><h2>Workload by owner</h2>{ownerReport.map(([owner,count]) => <div className="owner" key={owner}><div className="avatar">{owner.charAt(0)}</div><span>{owner}</span><strong>{count}</strong></div>)}<div className="report-divider"/><p className="eyebrow">WEEKLY OUTCOMES</p><p className="report-note">{completionLabel} work is retained with its outcome, so your weekly review writes itself.</p></>}</aside>
       </section>
       </>}
-      {section === "calendar" && <section className="calendar-layout"><div className="calendar-panel"><div className="calendar-toolbar"><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{monthTitle}</h2><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{calendarDays.map((day, index) => { if (day < 1) return <div className="calendar-day blank" key={index}/>; const key = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; const logged = issues.filter(i => dayKey(i.createdAt) === key); const reflections = diaryLog.filter(event => dayKey(event.at) === key); const dayMood = moodByDay.get(key); return <button key={key} className={`calendar-day ${key === selectedDay ? "chosen" : ""} ${dayMood ? `has-mood mood-${dayMood}` : ""}`} onClick={() => setSelectedDay(key)}><span>{day}</span>{(logged.length > 0 || reflections.length > 0) && <div className="day-counts">{logged.length > 0 && <em>{logged.length} logged</em>}{reflections.length > 0 && <em className="diary-count">✎ {reflections.length}</em>}</div>}{logged.slice(0, reflections.length ? 1 : 2).map(i => <small key={i.id}>{i.title}</small>)}{reflections.slice(0, 1).map(event => <small className="diary-line" key={event.id}>{moodName(event.mood)} · {event.title || "Untitled reflection"}</small>)}</button>; })}</div>{moodByDay.size > 0 && <div className="calendar-legend"><span>HOW THE DAYS FELT</span>{moods.map(mood => <span className={`legend-dot legend-${mood.value}`} key={mood.value}><i aria-hidden="true"/>{mood.label}</span>)}</div>}</div><aside className="day-summary"><p className="eyebrow">DAY SUMMARY</p><h2>{new Intl.DateTimeFormat("en", { weekday:"long", month:"long", day:"numeric" }).format(new Date(`${selectedDay}T12:00`))}</h2><p className="summary-count">{selectedIssues.length} issue{selectedIssues.length === 1 ? "" : "s"} logged{selectedDiary.length ? ` · ${selectedDiary.length} diary ${selectedDiary.length === 1 ? "entry" : "entries"}` : ""}</p>{selectedDiary.length > 0 && <div className="day-diary"><p className="eyebrow">DIARY</p>{selectedDiary.map(event => <button key={event.id} className={`day-diary-entry action-${event.action}`} onClick={() => setSection("diary")}><span className={`mood-tag mood-${event.mood}`}>{moods.find(item => item.value === event.mood)?.symbol} {moodName(event.mood)}</span><strong>{event.title || "Untitled reflection"}</strong><small>{diaryEventLabel(event.action)} · {dateLabel(event.at)}{event.detail ? ` · ${event.detail}` : ""}</small></button>)}</div>}<div className="day-issues">{selectedIssues.map(issue => <button key={issue.id} onClick={() => { setActiveId(issue.id); setShowDetail(true); }}><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.createdAt)}</small></button>)}{!selectedIssues.length && !selectedDiary.length && <p className="empty">Nothing logged for this day.</p>}</div></aside></section>}
-      {section === "metrics" && <section className="insights"><div className={`health-card ${health === "Looking healthy" ? "healthy" : "watch"}`}><div><p className="eyebrow">OVERALL SIGNAL</p><h2>{health}</h2><p>{health === "Looking healthy" ? "Follow-ups and completion timing are in a good place." : "A few signals need attention—start with overdue items and slow handoffs."}</p></div><strong>{health === "Looking healthy" ? <Petal size={38}/> : "!"}</strong></div><div className="metric-row insight-metrics"><article><span>Completion rate</span><strong>{issues.length ? Math.round((resolvedIssues.length / issues.length) * 100) : 0}%</strong><small>{resolvedIssues.length} of {issues.length} issues completed</small></article><article className={onTimeRate >= 80 ? "good" : "warm"}><span>On-time completion</span><strong>{dueResolved.length ? `${onTimeRate}%` : "—"}</strong><small>{dueResolved.length ? `${onTimeCount} completed by their ETA` : "Set ETAs to begin tracking"}</small></article><article><span>Avg. completion time</span><strong>{completionHours.length ? `${averageHours.toFixed(1)}h` : "—"}</strong><small>{completionHours.length ? "From logged to completed" : "Complete work to measure"}</small></article><article className={overdueCount ? "warm" : "good"}><span>Currently overdue</span><strong>{overdueCount}</strong><small>{overdueCount ? "Follow up to get back on track" : "No active work is overdue"}</small></article></div><div className="insight-detail"><article><p className="eyebrow">WHAT THIS MEANS</p><h2>Completion timing</h2><div className="progress-track"><span style={{ width: `${Math.max(8, onTimeRate)}%` }}/></div><p>{dueResolved.length ? `${onTimeRate}% of work with a logged ETA was completed on time. ${onTimeRate >= 80 ? "That’s a solid operating rhythm." : "Aim for 80% or higher by checking in before ETAs slip."}` : "Once you complete issues with expected completion times, you’ll see a timing trend here."}</p></article><article><p className="eyebrow">FOCUS NEXT</p><h2>Recommended actions</h2><ul><li>{overdueCount ? `Follow up on ${overdueCount} overdue issue${overdueCount === 1 ? "" : "s"}.` : "Keep your current follow-up rhythm."}</li><li>Capture an outcome whenever work is completed.</li><li>Set an expected update time for clearer delivery signals.</li></ul></article></div>
-        <section className="insight-action-center" aria-labelledby="insight-action-title"><div className="insight-action-head"><div><p className="eyebrow">ACT ON THE SIGNAL</p><h2 id="insight-action-title">Turn the gaps into next moves</h2><p>Each action opens the exact queue or record that needs attention.</p></div><span>{overdueCount + missingEtaIssues.length + missingOutcomeIssues.length} open recommendation{overdueCount + missingEtaIssues.length + missingOutcomeIssues.length === 1 ? "" : "s"}</span></div><div className="insight-action-list"><article className={overdueCount ? "needs-action" : "is-complete"}><span className="insight-action-mark">{overdueCount ? "!" : "✓"}</span><div><strong>Recover overdue work</strong><p>{overdueCount ? `${overdueCount} active item${overdueCount === 1 ? " is" : "s are"} past the expected update.` : "No active work is overdue."}</p></div>{overdueCount > 0 && <button type="button" onClick={() => openInsightQueue("overdue")}>Work the queue →</button>}</article><article className={missingEtaIssues.length ? "needs-action" : "is-complete"}><span className="insight-action-mark">{missingEtaIssues.length ? "◷" : "✓"}</span><div><strong>Set missing expectations</strong><p>{missingEtaIssues.length ? `${missingEtaIssues.length} active item${missingEtaIssues.length === 1 ? " has" : "s have"} no ETA.` : "Every active item has an expected update."}</p></div>{missingEtaIssues.length > 0 && <button type="button" onClick={() => openInsightQueue("eta")}>Set the first ETA →</button>}</article><article className={missingOutcomeIssues.length ? "needs-action" : "is-complete"}><span className="insight-action-mark">{missingOutcomeIssues.length ? "✎" : "✓"}</span><div><strong>Preserve the outcome</strong><p>{missingOutcomeIssues.length ? `${missingOutcomeIssues.length} completed item${missingOutcomeIssues.length === 1 ? " is" : "s are"} missing the result or learning.` : "Every completed item has an outcome."}</p></div>{missingOutcomeIssues.length > 0 && <button type="button" onClick={() => openInsightQueue("outcome")}>Capture the first outcome →</button>}</article></div></section>
-        <section className="memory-center"><div className="memory-head"><div><p className="eyebrow">WHAT YOU LEARNED</p><h2>Keep what you worked out, not just the fact that it ended</h2><p>A line or two now saves you the whole puzzle when something like it comes round again.</p></div><span>{resolvedIssues.length} closed out</span></div>{resolvedIssues.length ? <div className="memory-list">{resolvedIssues.slice(0,6).map(issue => <article key={issue.id}><div><strong>{issue.title}</strong><p>{issue.memory?.resolution || issue.outcome || "Nothing written down yet."}</p></div><button type="button" onClick={() => openMemoryRecord(issue)}>{issue.memory?.resolution && issue.memory?.learning ? "Review" : "Write it down"} →</button></article>)}</div> : <p className="memory-empty">Close something out and it will show up here, waiting for a line about how it went.</p>}</section>
-        <div className="diary-insights">
-          <div className="diary-insights-head"><div><p className="eyebrow">FROM YOUR DIARY</p><h2>The other half of the story<Petal className="title-petal" size={19}/></h2><p>Patterns from your own words. Everything here is worked out on this device.</p></div>{diaryInsights && <button className="secondary" type="button" onClick={() => setSection("diary")}>Open the diary</button>}</div>
-          {diaryLocked
-            ? <div className="diary-insights-empty"><span><Petal size={26}/></span><h3>Your diary is locked.</h3><p>Unlock it on the Diary page and these patterns come back with it.</p></div>
-            : !diaryInsights
-            ? <div className="diary-insights-empty"><span>✎</span><h3>Nothing to read yet.</h3><p>Write a few reflections and this fills up with your streaks, your moods, and the words you keep reaching for.</p></div>
-            : <>
-              <div className="metric-row insight-metrics">
-                <article><span>Reflections</span><strong>{diaryInsights.entries.length}</strong><small>across {diaryInsights.daysWritten} day{diaryInsights.daysWritten === 1 ? "" : "s"}</small></article>
-                <article className={diaryInsights.currentStreak > 1 ? "good" : ""}><span>Writing streak</span><strong>{diaryInsights.currentStreak || "—"}</strong><small>{diaryInsights.currentStreak > 1 ? `${diaryInsights.currentStreak} days running · best ${diaryInsights.longestStreak}` : `Longest run so far: ${diaryInsights.longestStreak} day${diaryInsights.longestStreak === 1 ? "" : "s"}`}</small></article>
-                <article><span>Words written</span><strong>{diaryInsights.totalWords.toLocaleString()}</strong><small>{diaryInsights.averageWords} a page · longest {diaryInsights.longestWords}</small></article>
-                <article><span>Pages revisited</span><strong>{diaryInsights.revisited}</strong><small>{diaryInsights.revisited ? "you went back and reworked them" : "no page has needed a second pass"}</small></article>
-              </div>
-
-              <article className="insight-panel mood-ribbon-card">
-                <div className="insight-panel-head"><div><p className="eyebrow">MOOD RIBBON</p><h3>Your last {diaryInsights.ribbon.length} page{diaryInsights.ribbon.length === 1 ? "" : "s"}, oldest first</h3></div><span className={`mood-tag mood-${diaryInsights.topMood.value}`}>{diaryInsights.topMood.symbol} mostly {diaryInsights.topMood.label.toLowerCase()}</span></div>
-                <div className="mood-ribbon">{diaryInsights.ribbon.map(entry => <button key={entry.id} type="button" className={`ribbon-block mood-${entry.mood}`} title={`${moodName(entry.mood)} · ${dateLabel(entry.at)}${entry.title ? ` · ${entry.title}` : ""}`} aria-label={`${moodName(entry.mood)} on ${dateLabel(entry.at)}`} onClick={() => { setOpenDiaryId(entry.id); }}/>)}</div>
-                <div className="mood-mix">{diaryInsights.moodCounts.filter(mood => mood.count).map(mood => <span key={mood.value} className={`mood-tag mood-${mood.value}`}>{mood.symbol} {mood.label} · {Math.round((mood.count / diaryInsights.entries.length) * 100)}%</span>)}</div>
-              </article>
-
-              <div className="insight-detail">
-                <article className="insight-panel">
-                  <p className="eyebrow">WHAT KEEPS COMING UP</p><h3>Recurring threads</h3>
-                  {diaryInsights.themes.length
-                    ? <ul className="theme-bars">{diaryInsights.themes.map(theme => <li key={theme.label}><span className="theme-name">{theme.label}</span><span className="theme-track"><span style={{ width: `${Math.max(10, Math.round((theme.count / diaryInsights.entries.length) * 100))}%` }}/></span><em>{theme.count}</em></li>)}</ul>
-                    : <p>No thread has repeated yet — write a few more and the pattern will show.</p>}
-                  <p className="insight-note">{(() => {
-                    if (!diaryInsights.themes.length) return "Threads are counted across every page, so they sharpen as you write.";
-                    const lead = diaryInsights.themes[0];
-                    const share = Math.round((lead.count / diaryInsights.entries.length) * 100);
-                    const name = `${lead.label.charAt(0).toUpperCase()}${lead.label.slice(1)}`;
-                    return share >= 30
-                      ? `${name} is the strongest thread — ${lead.count} of your ${diaryInsights.entries.length} pages. At that rate it has stopped being a bad week and started being a condition worth changing on purpose.`
-                      : `${name} leads so far, in ${lead.count} of ${diaryInsights.entries.length} pages. Early days — but that is the thread to watch.`;
-                  })()}</p>
-                </article>
-
-                <article className="insight-panel">
-                  <p className="eyebrow">WHEN YOU WRITE</p><h3>{diaryInsights.favouriteTime.label === "Late night" ? "A night writer ☾" : diaryInsights.favouriteTime.label === "Early" ? "An early writer ☀" : `Mostly ${diaryInsights.favouriteTime.label.toLowerCase()}`}</h3>
-                  <ul className="clock-bars">{diaryInsights.clock.map(part => <li key={part.id} className={part.id === diaryInsights.favouriteTime.id ? "is-top" : ""}><span className="theme-name">{part.label}<small>{part.note}</small></span><span className="theme-track"><span style={{ width: `${part.count ? Math.max(8, Math.round((part.count / diaryInsights.entries.length) * 100)) : 0}%` }}/></span><em>{part.count}</em></li>)}</ul>
-                  {diaryInsights.brightestDay && <p className="insight-note">{diaryInsights.brightestDay.name === diaryInsights.heaviestDay?.name ? `Every page so far lands on a ${diaryInsights.brightestDay.name}.` : `${diaryInsights.brightestDay.name}s read lightest; ${diaryInsights.heaviestDay?.name}s carry the most weight.`}</p>}
-                </article>
-              </div>
-
-              <div className="insight-detail">
-                <article className="insight-panel">
-                  <p className="eyebrow">YOUR WORDS</p><h3>What you keep reaching for</h3>
-                  {diaryInsights.words.length
-                    ? <div className="word-cloud">{diaryInsights.words.map(([word, count], index) => <span key={word} className="word-chip" style={{ fontSize: `${Math.round(22 - index * 1.6)}px` }} title={`${count} times`}>{word}</span>)}</div>
-                    : <p>Once a word shows up on more than one page it will appear here.</p>}
-                </article>
-
-                <article className="insight-panel">
-                  <p className="eyebrow">DIARY &amp; THE QUEUE</p><h3>{diaryInsights.crossover ? "Busy days versus quiet ones" : diaryInsights.lift ? "Your biggest lift" : "Still gathering"}</h3>
-                  {diaryInsights.crossover
-                    ? <><div className="crossover"><div><strong>{diaryInsights.crossover.busy}%</strong><span>heavy on days you logged 3+ tasks</span><small>{diaryInsights.crossover.busyCount} pages</small></div><div><strong>{diaryInsights.crossover.quiet}%</strong><span>heavy on quieter days</span><small>{diaryInsights.crossover.quietCount} pages</small></div></div><p className="insight-note">{diaryInsights.crossover.busy - diaryInsights.crossover.quiet >= 15 ? "A busy queue and a heavy page go together for you. That is a workload signal, not a character flaw." : diaryInsights.crossover.quiet - diaryInsights.crossover.busy >= 15 ? "Curiously, the quieter days read heavier. Whatever is weighing on you is not simply the volume of work." : "Your mood holds fairly steady whether the queue is full or quiet."}</p></>
-                    : diaryInsights.lift
-                      ? <p className="insight-note">Between {dateLabel(diaryInsights.lift.from.at)} and {dateLabel(diaryInsights.lift.to.at)} you moved from {moodName(diaryInsights.lift.from.mood).toLowerCase()} to {moodName(diaryInsights.lift.to.mood).toLowerCase()}{diaryInsights.lift.to.title ? ` on “${diaryInsights.lift.to.title}”` : ""}. Worth knowing what changed — that is the part you can repeat.</p>
-                      : <p className="insight-note">Keep writing. Once there are a few pages either side of a busy day, this compares how the full days read against the quiet ones.</p>}
-                </article>
-              </div>
-            </>}
-        </div></section>}
+      {section === "calendar" && <section className="calendar-layout"><div className="calendar-panel"><div className="calendar-toolbar"><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><h2>{monthTitle}</h2><button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{calendarDays.map((day, index) => { if (day < 1) return <div className="calendar-day blank" key={index}/>; const key = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth()+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`; const due = issues.filter(i => i.expected && dayKey(i.expected) === key && !i.archivedAt); const reflections = diaryLog.filter(event => dayKey(event.at) === key); const dayMood = moodByDay.get(key); return <button key={key} className={`calendar-day ${key === selectedDay ? "chosen" : ""} ${dayMood ? `has-mood mood-${dayMood}` : ""}`} onClick={() => setSelectedDay(key)}><span>{day}</span>{(due.length > 0 || reflections.length > 0) && <div className="day-counts">{due.length > 0 && <em>{due.length} due</em>}{reflections.length > 0 && <em className="diary-count">✎ {reflections.length}</em>}</div>}{due.slice(0, reflections.length ? 1 : 2).map(i => <small key={i.id}>{i.title}</small>)}{reflections.slice(0, 1).map(event => <small className="diary-line" key={event.id}>{moodName(event.mood)} · {event.title || "Untitled reflection"}</small>)}</button>; })}</div>{moodByDay.size > 0 && <div className="calendar-legend"><span>HOW THE DAYS FELT</span>{moods.map(mood => <span className={`legend-dot legend-${mood.value}`} key={mood.value}><i aria-hidden="true"/>{mood.label}</span>)}</div>}</div><aside className="day-summary"><p className="eyebrow">DAY SUMMARY</p><h2>{new Intl.DateTimeFormat("en", { weekday:"long", month:"long", day:"numeric" }).format(new Date(`${selectedDay}T12:00`))}</h2><p className="summary-count">{selectedIssues.length} issue{selectedIssues.length === 1 ? "" : "s"} due{selectedDiary.length ? ` · ${selectedDiary.length} diary ${selectedDiary.length === 1 ? "entry" : "entries"}` : ""}</p>{selectedDiary.length > 0 && <div className="day-diary"><p className="eyebrow">DIARY</p>{selectedDiary.map(event => <button key={event.id} className={`day-diary-entry action-${event.action}`} onClick={() => setSection("diary")}><span className={`mood-tag mood-${event.mood}`}>{moods.find(item => item.value === event.mood)?.symbol} {moodName(event.mood)}</span><strong>{event.title || "Untitled reflection"}</strong><small>{diaryEventLabel(event.action)} · {dateLabel(event.at)}{event.detail ? ` · ${event.detail}` : ""}</small></button>)}</div>}<div className="day-issues">{selectedIssues.map(issue => <article key={issue.id}><button className="day-issue-main" type="button" onClick={() => openIssueDetail(issue.id)}><span className={statusClass(issue.status)} style={statusStyle(issue.status)}>{issue.status}</span><strong>{issue.title}</strong><small>{issue.owner} · {dateLabel(issue.expected)}</small></button><div className="day-issue-actions">{!isCompleteStatus(issue.status) && <button type="button" onClick={() => completeIssue(issue)}>✓ Complete</button>}<button type="button" onClick={() => openIssueDetail(issue.id)}>Reschedule</button></div></article>)}{!selectedIssues.length && !selectedDiary.length && <p className="empty">Nothing logged for this day.</p>}</div></aside></section>}
       {section === "metrics" && <section className="insights-2026">
         <div className="insights-toolbar">
           <div className="insight-section-tabs" role="tablist" aria-label="Insights sections">
@@ -1866,9 +1920,9 @@ export default function Home() {
           <div className="review-actions"><button className="secondary" type="button" onClick={() => { setReviewRange(range => range === "calendar" ? "recent" : "calendar"); setReviewWeek(startOfWeek(new Date())); }}>{review.isRecent ? "Calendar week" : "Recent 7 days"}</button>{!review.isRecent && !review.isThisWeek && <button className="secondary" type="button" onClick={() => setReviewWeek(startOfWeek(new Date()))}>This week</button>}</div>
         </div>
         <div className="review-copy">
-          <div className="review-copy-head"><div><p className="eyebrow">TAKE IT SOMEWHERE ELSE</p><h3>Copy this week as…</h3></div><label className="review-takeaway"><input type="checkbox" checked={reviewTakeaway} onChange={event => setReviewTakeaway(event.target.checked)}/><span>Include a takeaway line</span></label></div>
-          <div className="review-copy-choices"><button className="primary" type="button" onClick={() => copyReviewSummary("professional")}>Professional</button><button className="secondary" type="button" onClick={() => copyReviewSummary("personal")}>Personal</button><button className="secondary" type="button" onClick={() => copyReviewSummary("both")}>Both</button></div>
-          <small>The professional one is written to be pasted straight into Teams or Slack. Your diary text is never in any of them.</small>
+          <div className="review-copy-head"><div><p className="eyebrow">TAKE IT SOMEWHERE ELSE</p><h3>Copy your work as…</h3></div><label className="review-takeaway"><input type="checkbox" checked={reviewTakeaway} onChange={event => setReviewTakeaway(event.target.checked)}/><span>Include a takeaway line</span></label></div>
+          <div className="review-copy-period" role="group" aria-label="How far back to cover">{([["week", "This week"], ["quarter", "This quarter"], ["year", "This year"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={copyPeriod === value} className={copyPeriod === value ? "is-chosen" : ""} onClick={() => setCopyPeriod(value)}>{label}</button>)}</div><div className="review-copy-choices"><button className="primary" type="button" onClick={() => copyReviewSummary("professional")}>Professional</button><button className="secondary" type="button" onClick={() => copyReviewSummary("personal")}>Personal</button><button className="secondary" type="button" onClick={() => copyReviewSummary("both")}>Both</button></div>
+          <small>{copyPeriod === "week" ? "The professional one is written to be pasted straight into Teams or Slack. Your diary text is never in any of them." : "Over a longer stretch this is the record of what you delivered — what is next is left out, because nobody reads a to-do list in a review. Your diary text is never in any of them."}</small>
           {review.unsorted.length > 0 && <div className="review-unsorted"><p>{review.unsorted.length === 1 ? "One thing this week predates the professional/personal choice, so it only appears in the combined copy." : `${review.unsorted.length} things this week predate the professional/personal choice, so they only appear in the combined copy.`}</p><ul>{review.unsorted.map(issue => <li key={issue.id}><span>{issue.title}</span><span className="review-unsorted-actions">{laneOptions.map(option => <button key={option.value} type="button" onClick={() => setIssueLane(issue.id, option.value)}>{option.label}</button>)}</span></li>)}</ul></div>}
         </div>
         {reviewCopied && <p className="transfer-message" role="status">{reviewCopied}</p>}
@@ -1916,6 +1970,14 @@ export default function Home() {
       {section === "settings" && <section className="settings-page" aria-labelledby="settings-page-title">
         <div className="settings-grid">
           <article className="settings-card">
+            <p className="eyebrow">PROFILE</p><h2>Your workspace</h2>
+            <form className="profile-settings-form" onSubmit={updateProfile}>
+              <label className="settings-field">Your name<input name="name" required defaultValue={profile?.name || ""}/></label>
+              <label className="settings-field">Your role<input name="role" required defaultValue={profile?.role || ""}/></label>
+              <div className="settings-actions"><button className="secondary" type="button" onClick={replayOnboarding}>Replay onboarding</button><button className="primary" type="submit">Save profile</button></div>
+            </form>
+          </article>
+          <article className="settings-card">
             <p className="eyebrow">APPEARANCE</p><h2 id="settings-page-title">Theme &amp; display</h2>
             <label className="settings-field">Theme<select value={theme} onChange={e => setTheme(e.target.value)}>{themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <button className="settings-toggle" type="button" role="switch" aria-checked={darkMode} onClick={() => setDarkMode(value => !value)}><span><strong>Dark mode</strong><small>{darkMode ? "On" : "Off"}</small></span><span className={`switch-track ${darkMode ? "is-on" : ""}`} aria-hidden="true"/></button>
@@ -1959,15 +2021,15 @@ export default function Home() {
               <div><strong>{backupAge === null ? "No backup saved yet" : backupAge === 0 ? "Backed up today" : `Last backup ${backupAge} day${backupAge === 1 ? "" : "s"} ago`}</strong><small>{backupAge === null || backupAge >= 14 ? "Cloud sync protects your account data; a downloaded backup gives you an independent copy you control." : "Keep an occasional backup file for recovery outside the synced account."}</small></div>
               <button className="primary" type="button" onClick={downloadBackup}>Save backup file</button>
             </div>
-            <div className="backup-restore"><div><strong>Merge from a backup file</strong><small>Keeps local data, updates matching records with the newest version, and adds missing records.</small></div><label className="file-button">Choose a backup file<input type="file" accept="application/json,.json" onChange={restoreFromFile}/></label></div>
+            <div className="backup-status export-row"><div><strong>Open your work in a spreadsheet</strong><small>Every task with its dates, outcomes and notes, as a .csv. This one is for reading and sorting \u2014 the backup file above is the one that restores the app.</small></div><button className="secondary" type="button" onClick={() => saveCsvFile(issuesToCsv(issues))} disabled={!issues.length}>Save spreadsheet</button></div><div className="backup-restore"><div><strong>Merge from a backup file</strong><small>Keeps local data, updates matching records with the newest version, and adds missing records.</small></div><label className="file-button">Choose a backup file<input type="file" accept="application/json,.json" onChange={restoreFromFile}/></label></div>
           </div>
           <div className="data-settings-grid"><div className="transfer-section"><div><strong>Move to another browser</strong><small>A code you can paste into Signal Petal somewhere else. For keeping a copy, use the backup file above instead.</small></div><textarea className="transfer-code" readOnly value={transferCode} aria-label="Backup code"/><button className="secondary" type="button" onClick={copyTransferCode}>Copy backup code</button></div><div className="transfer-section"><div><strong>Merge into this address</strong><small>Matching records keep the latest version; records that are not here yet are added.</small></div><textarea className="transfer-code" value={importCode} onChange={e => setImportCode(e.target.value)} placeholder="Paste a backup code here" aria-label="Backup code to import"/><div className="transfer-actions"><button className="secondary" type="button" onClick={pasteTransferCode}>Paste code</button><button className="primary" type="button" disabled={!importCode.trim()} onClick={importTransfer}>Import and merge</button></div></div></div>{transferMessage && <p className="transfer-message" role="status">{transferMessage}</p>}
           <div className="danger-zone"><div><strong>Reset account</strong><small>Permanently deletes cloud and device data, including tasks, diary entries, check-ins, preferences, and test data. Your sign-in itself is not deleted.</small></div><button className="delete" type="button" onClick={() => { setResetConfirmation(""); setShowResetAccount(true); }}>Reset account…</button></div>{syncMessage && <p className="status-error" role="alert">{syncMessage}</p>}
         </article>
       </section>}
     </section>
-    {showResetAccount && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !resetBusy) setShowResetAccount(false); }}><section className="confirm-card reset-card" role="dialog" aria-modal="true" aria-labelledby="reset-account-title"><p className="eyebrow">PERMANENT ACTION</p><h2 id="reset-account-title">Reset this account?</h2><p>This deletes every Signal Petal record from the cloud and this device. It cannot be undone. Download a backup first if there is anything you may need.</p><label>Type <strong>RESET</strong> to continue<input autoFocus value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} autoComplete="off"/></label><div className="confirm-actions"><button className="secondary" type="button" disabled={resetBusy} onClick={() => setShowResetAccount(false)}>Cancel</button><button className="delete" type="button" disabled={resetConfirmation !== "RESET" || resetBusy} onClick={resetAccount}>{resetBusy ? "Resetting…" : "Delete all data"}</button></div></section></div>}
-    {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDetail(false); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={() => setShowDetail(false)}>×</button><div className="detail-title"><div><span className={statusClass(active.status)} style={statusStyle(active.status)}>{active.status}</span><h2 id="issue-detail-title">{active.title}</h2><p>{active.details}</p></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label><button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div><div className="detail-grid"><div className="field lane-field"><span>Professional or personal</span><div className="link-options">{laneOptions.map(option => <button key={option.value} type="button" className={active.lane === option.value ? "is-linked" : ""} aria-pressed={active.lane === option.value} onClick={() => updateIssue({ lane: option.value })}>{option.label}</button>)}</div><small>{active.lane ? "" : "This one predates the choice. Pick one \u2014 until you do it only appears in the combined weekly summary."}</small></div><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onChange={onOwnerInput} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => onNameInput(e, setFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div>{!diaryLocked && diaryEntries.some(entry => (entry.issueIds ?? []).includes(active.id)) && <div className="issue-reflections"><div className="issue-reflections-head"><p className="eyebrow">FROM YOUR DIARY</p><small>Only you can see this.</small></div>{diaryEntries.filter(entry => (entry.issueIds ?? []).includes(active.id)).map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <button key={entry.id} type="button" onClick={() => { setShowDetail(false); setOpenDiaryId(entry.id); }}><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><strong>{entry.title || "Untitled reflection"}</strong><small>{dateLabel(entry.at)}</small></button>; })}</div>}<div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={() => setShowDetail(false)}>Save changes</button></div></section></div>}
+    {showResetAccount && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !resetBusy) setShowResetAccount(false); }}><section className="confirm-card reset-card" role="dialog" aria-modal="true" aria-labelledby="reset-account-title"><p className="eyebrow">PERMANENT ACTION</p><h2 id="reset-account-title">Reset this account?</h2><p>This deletes every Signal Petal record from the cloud and this device. It cannot be undone. Download a backup first if there is anything you may need.</p><label>Type <strong>RESET</strong> to continue<input data-autofocus value={resetConfirmation} onChange={event => setResetConfirmation(event.target.value)} autoComplete="off"/></label><div className="confirm-actions"><button className="secondary" type="button" disabled={resetBusy} onClick={() => setShowResetAccount(false)}>Cancel</button><button className="delete" type="button" disabled={resetConfirmation !== "RESET" || resetBusy} onClick={resetAccount}>{resetBusy ? "Resetting…" : "Delete all data"}</button></div></section></div>}
+    {showDetail && active && <div className="modal-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) closeIssueDetail(); }}><section className="detail detail-modal" role="dialog" aria-modal="true" aria-labelledby="issue-detail-title"><button className="close" type="button" aria-label="Close issue details" onClick={closeIssueDetail}>×</button><div className="detail-title"><div className="detail-heading-fields"><label>Title<input id="issue-detail-title" value={active.title} onChange={e => updateIssue({ title: e.target.value })}/></label><label>Details<textarea value={active.details} onChange={e => updateIssue({ details: e.target.value })}/></label></div><div className="detail-actions"><label>Status<select value={active.status} onChange={e => updateIssue({ status: e.target.value })}>{statuses.map(s => <option key={s}>{s}</option>)}</select></label>{active.archivedAt ? <button className="secondary" type="button" onClick={() => restoreIssue(active)}>Restore issue</button> : isCompleteStatus(active.status) ? <button className="secondary" type="button" onClick={() => archiveIssue(active)}>Archive issue</button> : null}<button className="delete" type="button" onClick={() => setShowDeleteConfirm(true)}>Delete issue</button></div></div>{previousRound && <div className="round-before"><div><p className="eyebrow">LAST TIME ROUND</p><strong>{dateLabel(completedAtOf(previousRound))}</strong><p>{previousNote || "Nothing was written down last time."}</p></div><button className="secondary" type="button" onClick={() => openIssueDetail(previousRound.id)}>Open that one →</button></div>}<div className="detail-grid"><div className="field lane-field"><span>Professional or personal</span><div className="link-options">{laneOptions.map(option => <button key={option.value} type="button" className={active.lane === option.value ? "is-linked" : ""} aria-pressed={active.lane === option.value} onClick={() => updateIssue({ lane: option.value })}>{option.label}</button>)}</div><small>{active.lane ? "" : "This one predates the choice. Pick one \u2014 until you do it only appears in the combined weekly summary."}</small></div><div className="field"><span>Priority</span><select value={active.priority || "medium"} onChange={e => updateIssue({ priority: e.target.value as Issue["priority"] })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div><div className="field"><span>Category</span><input value={active.category || ""} onChange={e => updateIssue({ category: e.target.value })} placeholder="e.g. Reliability, Admin"/></div><div className="field"><span>Primary owner</span><input key={active.id} defaultValue={active.owner} onChange={onOwnerInput} onBlur={e => changeOwner(e.target.value)}/></div><div className="field"><span>Does this come round again?</span><select value={repeatKey(active.repeat)} onChange={event => updateIssue({ repeat: repeatChoices.find(choice => repeatKey(choice.value) === event.target.value)?.value })}>{repeatChoices.map(choice => <option key={repeatKey(choice.value) || "once"} value={repeatKey(choice.value)}>{choice.label}</option>)}</select><small>{active.repeat ? "When you close this out, the next one opens on its own \u2014 counted from the date below, so the rhythm holds even if you finish late." : ""}</small></div><div className="field"><span>Expected update / done</span><input type="datetime-local" value={active.expected} onChange={e => updateIssue({expected:e.target.value})}/></div><div className="field wide people-field"><span>Follow-up people</span>{active.followUpPeople.length > 0 && <div className="people-chips">{active.followUpPeople.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => removeActiveFollowUp(person)}>×</button></span>)}</div>}<div className="people-add"><input value={followUpInput} onChange={e => onNameInput(e, setFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addActiveFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addActiveFollowUps}>+ Add people</button></div><small>These names help you track who needs a follow-up; no notifications are sent.</small></div><div className="field wide"><span>What they’re doing / my current action</span><textarea value={active.action} onChange={e => updateIssue({action:e.target.value})}/></div><div className="field wide"><span>Outcome</span><textarea placeholder="Capture the resolution, learning, or impact…" value={active.outcome} onChange={e => updateIssue({outcome:e.target.value})}/></div></div>{!diaryLocked && diaryEntries.some(entry => (entry.issueIds ?? []).includes(active.id)) && <div className="issue-reflections"><div className="issue-reflections-head"><p className="eyebrow">FROM YOUR DIARY</p><small>Only you can see this.</small></div>{diaryEntries.filter(entry => (entry.issueIds ?? []).includes(active.id)).map(entry => { const mood = moods.find(item => item.value === entry.mood) || moods[2]; return <button key={entry.id} type="button" onClick={() => { setShowDetail(false); setOpenDiaryId(entry.id); }}><span className={`mood-tag mood-${entry.mood}`}>{mood.symbol} {mood.label}</span><strong>{entry.title || "Untitled reflection"}</strong><small>{dateLabel(entry.at)}</small></button>; })}</div>}<div className="timeline"><div className="timeline-heading"><h3>Update timeline</h3><span>{active.updates.length} entries</span></div>{active.updates.map(entry => <div className="timeline-entry" key={entry.id}><div className="timeline-dot"/><div><strong>{entry.author}</strong><time>{dateLabel(entry.at)}</time><p>{entry.text}</p></div></div>)}<form className="update-form" onSubmit={addUpdate}><input name="update" placeholder="Add your update, decision, or next step…" aria-label="New update"/><button className="primary">Add update</button></form></div><div className="detail-save-actions"><button className="primary" type="button" onClick={closeIssueDetail}>Save changes</button></div></section></div>}
     {openEntry && (() => {
       const mood = moods.find(item => item.value === openEntry.mood) || moods[2];
       const drafting = editingDiaryId === openEntry.id;
@@ -1978,7 +2040,7 @@ export default function Home() {
           <button className="close" type="button" aria-label="Close this page" onClick={close}>×</button>
           <div className="diary-open-head"><em className="page-number">Page {pageNumbers.get(openEntry.id) ?? 1}</em><span className={`mood-tag mood-${drafting ? editDraft.mood : openEntry.mood}`}>{(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).symbol} {(drafting ? moods.find(item => item.value === editDraft.mood) || mood : mood).label}</span><time>{dateLabel(openEntry.at)}{openEntry.updatedAt ? ` · edited ${dateLabel(openEntry.updatedAt)}` : ""}</time></div>
           {drafting
-            ? <form className="diary-entry-edit" onSubmit={event => saveDiaryEdit(event, openEntry, openEntryIndex)}><fieldset className="mood-picker mood-picker-compact"><legend>Mood</legend>{moods.map(option => <button key={option.value} className={editDraft.mood === option.value ? "mood-selected" : ""} type="button" aria-pressed={editDraft.mood === option.value} onClick={() => setEditDraft(draft => ({ ...draft, mood: option.value }))}><span>{option.symbol}</span><small>{option.label}</small></button>)}</fieldset><label>Title <small>optional</small><input value={editDraft.title} onChange={event => setEditDraft(draft => ({ ...draft, title: event.target.value }))} placeholder="A short title…"/></label><div className="link-picker"><span>Linked tasks</span><div className="link-options">{linkableIssues.map(issue => <button key={issue.id} type="button" className={editDraft.issueIds.includes(issue.id) ? "is-linked" : ""} aria-pressed={editDraft.issueIds.includes(issue.id)} onClick={() => setEditDraft(draft => ({ ...draft, issueIds: draft.issueIds.includes(issue.id) ? draft.issueIds.filter(id => id !== issue.id) : [...draft.issueIds, issue.id] }))}>{issue.title}</button>)}</div></div><label>Reflection<textarea className="diary-ruled" required value={editDraft.text} onChange={event => setEditDraft(draft => ({ ...draft, text: event.target.value }))}/></label><div className="diary-entry-actions"><button className="primary" type="submit">Save changes</button><button className="secondary" type="button" onClick={cancelDiaryEdit}>Cancel</button></div></form>
+            ? <form className="diary-entry-edit" onSubmit={event => saveDiaryEdit(event, openEntry)}><fieldset className="mood-picker mood-picker-compact"><legend>Mood</legend>{moods.map(option => <button key={option.value} className={editDraft.mood === option.value ? "mood-selected" : ""} type="button" aria-pressed={editDraft.mood === option.value} onClick={() => setEditDraft(draft => ({ ...draft, mood: option.value }))}><span>{option.symbol}</span><small>{option.label}</small></button>)}</fieldset><label>Title <small>optional</small><input value={editDraft.title} onChange={event => setEditDraft(draft => ({ ...draft, title: event.target.value }))} placeholder="A short title…"/></label><div className="link-picker"><span>Linked tasks</span><div className="link-options">{linkableIssues.map(issue => <button key={issue.id} type="button" className={editDraft.issueIds.includes(issue.id) ? "is-linked" : ""} aria-pressed={editDraft.issueIds.includes(issue.id)} onClick={() => setEditDraft(draft => ({ ...draft, issueIds: draft.issueIds.includes(issue.id) ? draft.issueIds.filter(id => id !== issue.id) : [...draft.issueIds, issue.id] }))}>{issue.title}</button>)}</div></div><label>Reflection<textarea className="diary-ruled" required value={editDraft.text} onChange={event => setEditDraft(draft => ({ ...draft, text: event.target.value }))}/></label><div className="diary-entry-actions"><button className="primary" type="submit">Save changes</button><button className="secondary" type="button" onClick={cancelDiaryEdit}>Cancel</button></div></form>
             : <><h2 id="diary-open-title" className="diary-open-title">{openEntry.title || "Untitled reflection"}</h2><div className="diary-ruled diary-open-body">{openEntry.text}</div>{(openEntry.issueIds ?? []).length > 0 && <div className="entry-links"><span>About</span><div>{(openEntry.issueIds ?? []).map(id => { const issue = issues.find(item => item.id === id); return issue ? <button key={id} type="button" onClick={() => { setOpenDiaryId(""); setActiveId(id); setShowDetail(true); }}>{issue.title}</button> : null; })}</div></div>}{trail.length > 0 && <ul className="entry-trail">{trail.map(event => <li key={event.id}><strong>{diaryEventLabel(event.action)}</strong> {dateLabel(event.at)} <span>{event.detail}</span></li>)}</ul>}<div className="diary-entry-actions"><button type="button" onClick={() => startDiaryEdit(openEntry)}>Edit</button><button type="button" className="entry-delete" onClick={() => setConfirmDiaryDelete(openEntry.id)}>Delete</button></div></>}
         </section>
       </div>;
@@ -2000,10 +2062,9 @@ export default function Home() {
         {checkInStep < 3 && dailyCheckIns.length > 0 && <div className="check-in-history-toggle"><button type="button" onClick={() => setShowCheckInHistory(value => !value)}>{showCheckInHistory ? "Hide previous briefs" : "View previous briefs"}</button>{showCheckInHistory && <div className="check-in-history">{dailyCheckIns.slice(0,3).map(checkIn => <article key={checkIn.id}><time>{dateLabel(checkIn.at)}</time><p>{clip(checkIn.brief, 220)}</p></article>)}</div>}</div>}
       </form>
     </div>}
-    {showCommandPalette && <div className="modal-backdrop command-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowCommandPalette(false); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette"><div className="command-search"><span>⌕</span><input autoFocus value={commandQuery} onChange={event => { setCommandQuery(event.target.value); setCommandIndex(0); }} onKeyDown={walkCommands} placeholder="Search commands, tasks, or reflections…" aria-label="Search commands"/><kbd>Esc</kbd></div><div className="command-results">{commandItems.map((item, index) => <Fragment key={item.key}>{(index === 0 || commandItems[index - 1].group !== item.group) && <p>{item.group}</p>}<button type="button" className={index === commandCursor ? "is-active" : ""} ref={node => { if (index === commandCursor) node?.scrollIntoView({ block: "nearest" }); }} onMouseEnter={() => setCommandIndex(index)} onClick={item.run}><span className={item.group === "REFLECTIONS" ? "command-mood" : ""}>{item.icon}</span><strong>{item.label}</strong>{item.group === "QUICK ACTIONS" ? <kbd>{item.hint}</kbd> : <small>{item.hint}</small>}</button></Fragment>)}{!commandItems.length && <div className="command-empty">No command, task, or reflection matches “{commandQuery}”.</div>}</div><footer><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span>Shortcut <kbd>⌘ K</kbd> or <kbd>/</kbd></span></footer></section></div>}
-    {showOnboarding && profile && <div className="modal-backdrop onboarding-backdrop" role="presentation"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><button className="onboarding-skip" type="button" onClick={() => finishOnboarding()}>Skip for now</button><span className="profile-mark"><Petal size={31}/></span><p className="eyebrow">YOUR FIRST SIGNAL LOOP</p><h2 id="onboarding-title">{["Capture what needs attention","Give the work a next move","Let Focus now rank the queue","Close the day deliberately"][onboardingStep]}</h2><p>{["Start with one real issue, handoff, task, or risk you are carrying.","An owner, current action, and expected update turn a note into something the app can protect.","Overdue work, missing ETAs, and unclear actions rise automatically—with reversible actions beside them.","The daily check-in records movement, what can wait, and the capacity tomorrow’s plan should respect."][onboardingStep]}</p><div className="onboarding-visual"><span>{onboardingStep + 1}</span><div><strong>{["Log a signal","Name the next move","Work the ranked queue","Save the daily brief"][onboardingStep]}</strong><small>{["Title · context · owner","Action · ETA · follow-up people","Follow up · reschedule · handle","Movement · boundaries · capacity"][onboardingStep]}</small></div></div><div className="onboarding-dots">{[0,1,2,3].map(step => <button key={step} type="button" className={step === onboardingStep ? "is-current" : ""} aria-label={`Onboarding step ${step + 1}`} onClick={() => setOnboardingStep(step)}/>)}</div><div className="onboarding-actions">{onboardingStep > 0 && <button className="secondary" type="button" onClick={() => setOnboardingStep(step => step - 1)}>Back</button>}{onboardingStep < 3 ? <button className="primary" type="button" onClick={() => setOnboardingStep(step => step + 1)}>Next</button> : <><button className="secondary" type="button" onClick={() => finishOnboarding("check-in")}>Try the check-in</button><button className="primary" type="button" onClick={() => finishOnboarding("create")}>Log my first signal</button></>}</div></section></div>}
+    {showCommandPalette && <CommandPalette query={commandQuery} items={commandItems} cursor={commandCursor} onQueryChange={value => { setCommandQuery(value); setCommandIndex(0); }} onCursorChange={setCommandIndex} onKeyDown={walkCommands} onClose={() => setShowCommandPalette(false)}/>}
+    {showOnboarding && profile && <OnboardingDialog step={onboardingStep} onStepChange={setOnboardingStep} onFinish={finishOnboarding}/>}
     {memoryIssue && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMemoryIssueId(""); }}><form className="memory-modal" onSubmit={saveOperationalMemory} role="dialog" aria-modal="true" aria-labelledby="memory-title"><button className="close" type="button" aria-label="Close this record" onClick={() => setMemoryIssueId("")}>×</button><p className="eyebrow">WHAT YOU LEARNED</p><h2 id="memory-title">{memoryIssue.title}</h2><p className="memory-modal-copy">{memoryIssue.lane === "professional" ? "Write it so a colleague would follow it too \u2014 this is what the professional weekly summary draws on." : memoryIssue.lane === "personal" ? "A line or two is plenty. None of this goes into anything you paste into a work chat." : "Two boxes are enough. Write it so that future you recognises this faster next time."}</p><label>What finally worked<textarea name="resolution" defaultValue={memoryIssue.memory?.resolution ?? memoryIssue.outcome} placeholder={memoryIssue.lane === "professional" ? "What actually ended it \u2014 the change, the decision, or the person who unblocked it." : "What actually ended it?"} required/></label>{memoryIssue.lane === "professional" && <label>How you’d say this outside the team <small>optional</small><textarea name="shareable" defaultValue={memoryIssue.memory?.shareable ?? ""} placeholder="One line a colleague could read cold. The professional summary uses this instead of the title."/></label>}<label>What you’d tell yourself next time<textarea name="learning" defaultValue={memoryIssue.memory?.learning ?? ""} placeholder={memoryIssue.lane === "professional" ? "What to repeat, change or avoid \u2014 written so it still makes sense to someone who was not there." : "What to repeat, change, or avoid."} required/></label><button className="memory-more" type="button" aria-expanded={memoryDetail} aria-controls="memory-extra" onClick={() => setMemoryDetail(open => !open)}>{memoryDetail ? "− Hide the extra detail" : "+ Add more detail"}</button><div className="memory-extra" id="memory-extra" hidden={!memoryDetail}><label>What was going on<textarea name="symptoms" defaultValue={memoryIssue.memory?.symptoms ?? memoryIssue.details} placeholder={memoryIssue.lane === "professional" ? "What was happening, who or what it was holding up, and for how long." : "What was happening, and who or what it affected."}/></label><label>What was actually behind it<textarea name="rootCause" defaultValue={memoryIssue.memory?.rootCause ?? ""} placeholder={memoryIssue.lane === "professional" ? "What was really behind it, not just the first thing that was tried." : "Why it happened, once you knew."}/></label><label>Anything to keep an eye on<textarea name="followUp" defaultValue={memoryIssue.memory?.followUp ?? ""} placeholder={memoryIssue.lane === "professional" ? "What still needs watching, and who is on it." : "Something to check again later, or a change worth making."}/></label></div><div className="check-in-actions"><button className="secondary" type="button" onClick={() => setMemoryIssueId("")}>Cancel</button><button className="primary" type="submit">Save what you learned</button></div></form></div>}
-    {showDailyCheckIn && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setShowDailyCheckIn(false); }}><form className="daily-check-in-modal" onSubmit={saveDailyCheckIn} role="dialog" aria-modal="true" aria-labelledby="daily-check-in-title"><button className="close" type="button" aria-label="Close daily check-in" onClick={() => setShowDailyCheckIn(false)}>×</button><div className="check-in-heading"><p className="eyebrow">TWO-MINUTE WRAP-UP</p><h2 id="daily-check-in-title">How did today actually move?</h2><p>Review the operational facts, then make tomorrow realistic for the capacity you have.</p></div><div className="check-in-facts"><div><strong>{completedToday.length}</strong><span>completed today</span></div><div className={overdueCount ? "needs-care" : ""}><strong>{overdueCount}</strong><span>currently overdue</span></div><div><strong>{openCount}</strong><span>still open</span></div></div><fieldset className="capacity-picker"><legend>What capacity are you planning with?</legend><p>This stays private in Signal Petal and is never included in copied work summaries.</p><div>{([['high','Strong','I have room for demanding work'],['steady','Steady','A normal, focused load'],['low','Limited','Protect the essentials']] as const).map(([value,label,copy]) => <button key={value} type="button" className={checkInCapacity === value ? "is-selected" : ""} aria-pressed={checkInCapacity === value} onClick={() => setCheckInCapacity(value)}><strong>{label}</strong><small>{copy}</small></button>)}</div></fieldset>{issues.some(issue => !isCompleteStatus(issue.status)) && <fieldset className="park-picker"><legend>What can intentionally wait?</legend><p>Parking does not change status or ETA. It records the boundary in today’s brief.</p><div>{issues.filter(issue => !isCompleteStatus(issue.status)).slice(0,8).map(issue => <label key={issue.id}><input type="checkbox" checked={checkInParked.includes(issue.id)} onChange={() => setCheckInParked(ids => ids.includes(issue.id) ? ids.filter(id => id !== issue.id) : [...ids, issue.id])}/><span><strong>{issue.title}</strong><small>{issue.owner} · {isOverdue(issue) ? `${daysOverdue(issue)}d overdue` : dateLabel(issue.expected)}</small></span></label>)}</div></fieldset>}<label className="check-in-note">What should tomorrow-you know? <small>optional</small><textarea value={checkInNote} onChange={event => setCheckInNote(event.target.value)} placeholder="A decision, constraint, win, or first move for tomorrow…"/></label><div className="check-in-preview"><p className="eyebrow">YOUR BRIEF WILL CAPTURE</p><span>{completedToday.length} completed · {overdueCount} overdue · {checkInParked.length} intentionally waiting · {checkInCapacity} capacity</span></div><div className="check-in-actions"><button className="secondary" type="button" onClick={() => setShowDailyCheckIn(false)}>Cancel</button><button className="primary" type="submit">{todayCheckIn ? "Update today’s brief" : "Save daily brief"}</button></div>{dailyCheckIns.length > 0 && <div className="check-in-history"><p className="eyebrow">RECENT BRIEFS</p>{dailyCheckIns.slice(0,3).map(checkIn => <article key={checkIn.id}><time>{dateLabel(checkIn.at)}</time><p>{checkIn.brief}</p></article>)}</div>}</form></div>}
     {confirmEntry && <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setConfirmDiaryDelete(""); }}>
       <section className="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-diary-title">
         <h2 id="confirm-diary-title">Delete this reflection?</h2>
@@ -2025,8 +2086,8 @@ export default function Home() {
         <div className="confirm-actions"><button className="secondary" type="button" onClick={() => { setShowLockSetup(false); setLockMessage(""); }}>Cancel</button><button className="primary" type="submit" disabled={lockBusy}>{lockBusy ? "Locking…" : "Lock the diary"}</button></div>
       </form>
     </div>}
-    {showCreate && <div className="modal-backdrop" role="presentation"><form className="modal" onSubmit={addIssue}><button className="close" type="button" onClick={() => setShowCreate(false)}>×</button><p className="eyebrow">NEW WORK ITEM</p><h2>Log/Track</h2><label>Title<input required name="title" placeholder="What needs attention?"/></label><div className="link-picker lane-picker"><span>Professional or personal?</span><div className="link-options">{laneOptions.map(option => <button key={option.value} type="button" className={newLane === option.value ? "is-linked" : ""} aria-pressed={newLane === option.value} onClick={() => setNewLane(option.value)}>{option.label}</button>)}</div><small>{newLane === "professional" ? "Closing this out will ask for a little more, and it can go in the professional weekly summary." : newLane === "personal" ? "Closing this out stays short, and it stays out of anything you paste into a work chat." : "Pick one. Every task is one or the other, and it decides which weekly summary this one turns up in."}</small></div><label>Details<textarea name="details" placeholder="Context, impact, links, and useful clues…"/></label><div className="form-grid"><label>Primary owner<input name="owner" placeholder={personalOwner} onChange={onOwnerInput}/></label><label>Expected update<input name="expected" type="datetime-local"/></label></div><div className="people-field"><span>Follow-up people</span>{newFollowUps.length > 0 && <div className="people-chips">{newFollowUps.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => setNewFollowUps(items => items.filter(name => name !== person))}>×</button></span>)}</div>}<div className="people-add"><input value={newFollowUpInput} onChange={e => onNameInput(e, setNewFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addNewFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addNewFollowUps}>+ Add people</button></div><small>Optional. These people will only be tracked inside this issue.</small></div><label>Current action<textarea name="action" placeholder="What are they—or you—doing next?"/></label><button className="primary create" type="submit" disabled={!newLane}>{newLane ? "Create issue" : "Choose professional or personal first"}</button></form></div>}
-    {showDeleteConfirm && active && <div className="modal-backdrop confirm-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="confirm-icon">!</span><h2 id="delete-title">Delete this issue?</h2><p id="delete-description">“{active.title}” and its update history will be permanently removed.</p><div className="confirm-actions"><button className="secondary" type="button" autoFocus onClick={() => setShowDeleteConfirm(false)}>Keep issue</button><button className="danger" type="button" onClick={deleteIssue}>Delete issue</button></div></section></div>}
-    {hydrated && !profile && <div className="profile-backdrop"><form className="profile-card" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="setup-title"><span className="profile-mark"><Petal size={31}/></span><p className="eyebrow">WELCOME TO SIGNAL PETAL</p><h1 id="setup-title">Let&apos;s make this yours.</h1><p>Tell us a little about yourself and we&apos;ll personalize your workspace. This stays only in this browser.</p><label>Your name<input required name="name" autoFocus placeholder="e.g. Aesi"/></label><label>Your role<input required name="role" placeholder="e.g. Site Reliability Engineer"/></label><button className="primary" type="submit">Create my workspace</button><div className="profile-restore"><span>Coming back after losing your data?</span><label className="file-button">Restore from a backup file<input type="file" accept="application/json,.json" onChange={restoreFromFile}/></label>{transferMessage && <small role="status">{transferMessage}</small>}</div></form></div>}
+    {showCreate && <div className="modal-backdrop" role="presentation"><form className="modal" onSubmit={addIssue} role="dialog" aria-modal="true" aria-labelledby="create-title"><button className="close" type="button" aria-label="Close this form" onClick={() => setShowCreate(false)}>×</button><p className="eyebrow">NEW WORK ITEM</p><h2 id="create-title">Log/Track</h2><label>Title<input required name="title" placeholder="What needs attention?"/></label><label>Starting status<select name="status" defaultValue="New">{statuses.map(status => <option key={status}>{status}</option>)}</select></label><div className="link-picker lane-picker"><span>Professional or personal?</span><div className="link-options">{laneOptions.map(option => <button key={option.value} type="button" className={newLane === option.value ? "is-linked" : ""} aria-pressed={newLane === option.value} onClick={() => setNewLane(option.value)}>{option.label}</button>)}</div><small>{newLane === "professional" ? "Closing this out will ask for a little more, and it can go in the professional weekly summary." : newLane === "personal" ? "Closing this out stays short, and it stays out of anything you paste into a work chat." : "Pick one. Every task is one or the other, and it decides which weekly summary this one turns up in."}</small></div><label>Details<textarea name="details" placeholder="Context, impact, links, and useful clues…"/></label><div className="form-grid"><label>Priority<select name="priority" defaultValue="medium"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Category<input name="category" placeholder="e.g. Reliability, Admin"/></label></div><div className="form-grid"><label>Primary owner<input name="owner" placeholder={personalOwner} onChange={onOwnerInput}/></label><label>Expected update<input name="expected" type="datetime-local"/></label></div><div className="people-field"><span>Follow-up people</span>{newFollowUps.length > 0 && <div className="people-chips">{newFollowUps.map(person => <span className="person-chip" key={person}>{person}<button type="button" aria-label={`Remove ${person}`} onClick={() => setNewFollowUps(items => items.filter(name => name !== person))}>×</button></span>)}</div>}<div className="people-add"><input value={newFollowUpInput} onChange={e => onNameInput(e, setNewFollowUpInput)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addNewFollowUps(); } }} placeholder="Add names, separated by commas" aria-label="Follow-up people to add"/><button className="secondary" type="button" onClick={addNewFollowUps}>+ Add people</button></div><small>Optional. These people will only be tracked inside this issue.</small></div><label>Current action<textarea name="action" placeholder="What are they—or you—doing next?"/></label><button className="primary create" type="submit" disabled={!newLane}>{newLane ? "Create issue" : "Choose professional or personal first"}</button></form></div>}
+    {showDeleteConfirm && active && <div className="modal-backdrop confirm-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setShowDeleteConfirm(false); }}><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-description"><span className="confirm-icon">!</span><h2 id="delete-title">Delete this issue?</h2><p id="delete-description">“{active.title}” and its update history will be permanently removed.</p><div className="confirm-actions"><button className="secondary" type="button" data-autofocus onClick={() => setShowDeleteConfirm(false)}>Keep issue</button><button className="danger" type="button" onClick={deleteIssue}>Delete issue</button></div></section></div>}
+    {hydrated && !profile && <div className="profile-backdrop"><form className="profile-card" onSubmit={saveProfile} role="dialog" aria-modal="true" aria-labelledby="setup-title"><span className="profile-mark"><Petal size={31}/></span><p className="eyebrow">WELCOME TO SIGNAL PETAL</p><h1 id="setup-title">Let&apos;s make this yours.</h1><p>Tell us a little about yourself and we&apos;ll personalize your workspace. This stays only in this browser.</p><label>Your name<input required name="name" data-autofocus placeholder="e.g. Aesi"/></label><label>Your role<input required name="role" placeholder="e.g. Site Reliability Engineer"/></label><button className="primary" type="submit">Create my workspace</button><div className="profile-restore"><span>Coming back after losing your data?</span><label className="file-button">Restore from a backup file<input type="file" accept="application/json,.json" onChange={restoreFromFile}/></label>{transferMessage && <small role="status">{transferMessage}</small>}</div></form></div>}
   </main>;
 }

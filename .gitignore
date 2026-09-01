@@ -39,3 +39,9 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# scratch and local snapshots
+/tmp/
+/output/
+/test-results/
+/playwright-report/

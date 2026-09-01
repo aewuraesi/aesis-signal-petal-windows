@@ -1,7 +1,5 @@
 "use client";
 
-import { useId } from "react";
-
 /* ---------------------------------------------------------------------------
    The Signal Petal mark.
 
@@ -27,8 +25,9 @@ const PETAL = "M12 2.5C16.3 5.4 16.9 10 12 13.3C7.1 10 7.7 5.4 12 2.5Z";
 const ANGLES = [0, 72, 144, 216, 288];
 
 export default function Petal({ size = 24, className, label }: { size?: number; className?: string; label?: string }) {
-  // Several marks share a page, and duplicate mask ids in one document collide.
-  const maskId = `petal-eye-${useId().replace(/:/g, "")}`;
+  // The mask content is identical for every mark. A deterministic id keeps server and client
+  // markup aligned while size/role variants avoid one mutable definition serving all uses.
+  const maskId = `petal-eye-${size}-${label ? "labelled" : "decorative"}`;
   return (
     <svg
       className={`petal-mark ${className ?? ""}`.trim()}
