@@ -961,3 +961,12 @@ button.year-pixel:hover{transform:scale(1.45);z-index:2;position:relative}
 .priority-chip,.category-chip{display:inline-flex;margin-left:6px;padding:3px 7px;border:1px solid var(--border);border-radius:999px;color:var(--subtext);background:var(--panel-soft);font-size:9px;font-weight:850;text-transform:capitalize}.priority-chip.priority-high{border-color:#e6b88e;color:#9a5b20;background:#fff6eb}.priority-chip.priority-urgent{border-color:#e7a4b4;color:#a83e58;background:#fff0f3}.issue-card-actions .restore-action{padding:6px 11px;border-radius:999px;color:var(--accent-deep);background:var(--accent-soft)}
 :where(button,a,input,textarea,select):focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px}
 .error-page,.loading-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--page);color:var(--text)}.error-page section{max-width:520px;padding:32px;border:1px solid var(--border);border-radius:20px;background:var(--panel);text-align:center;box-shadow:0 20px 60px rgb(48 19 37 / 12%)}.error-page section>span,.loading-page>span{display:block;color:var(--accent);font-size:32px}.error-page h1{margin:12px 0 8px}.error-page p{color:var(--subtext);line-height:1.6}.error-page div{display:flex;justify-content:center;gap:9px;margin-top:20px}.error-page button,.error-page a{padding:10px 14px;border:1px solid var(--border);border-radius:9px;background:var(--panel-soft);color:var(--accent-deep);font-weight:800;text-decoration:none}.error-page small{display:block;margin-top:18px;color:var(--subtext)}.loading-page{align-content:center;gap:9px}.loading-page p{color:var(--subtext)}
+
+/* The day and date, under the greeting. Quiet by design — it answers a question you
+   only glance at, so the weekday carries the weight and the rest sits back. */
+.today-stamp{display:flex;align-items:center;gap:7px;margin:9px 0 0;color:#91788a;font-size:12px;line-height:1.4}
+.today-stamp::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.55;flex:none}
+.today-stamp strong{color:#b16d93;font-weight:800;letter-spacing:-.1px}
+main .today-stamp{color:var(--subtext)}
+main .today-stamp strong{color:var(--accent-deep)}
+@media(max-width:650px){.today-stamp{margin-top:7px;font-size:12px}}

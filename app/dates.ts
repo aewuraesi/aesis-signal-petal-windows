@@ -49,3 +49,14 @@ export const advanceDate = (from: Date, every: number, unit: "week" | "month" | 
   at.setDate(Math.min(day, daysInMonth(at.getFullYear(), at.getMonth())));
   return at;
 };
+
+/* The day and date as the header says it: "Wednesday, 2 September 2026".
+   Spelled out in full rather than abbreviated — this is the one place in the app
+   that answers "what day is it?", and an abbreviation makes you do the expanding.
+
+   The weekday is formatted separately and the comma is ours, because it is also the
+   seam: the header sets the day in bold and the rest plain. Asking Intl for all four
+   fields at once puts a comma in on Node and no comma in on Chromium, and a header
+   that splits on a separator ICU may not have written renders the date twice. */
+export const todayLabel = (value: Date) =>
+  `${new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(value)}, ${new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(value)}`;

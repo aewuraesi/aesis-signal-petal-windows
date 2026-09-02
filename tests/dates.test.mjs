@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { startOfWeek, addDays, toDateTimeInput, weekLabel, daysSince, dateLabel, dayKey, dayBefore, spanLabel, advanceDate } from "../app/dates.ts";
+import { startOfWeek, addDays, toDateTimeInput, weekLabel, daysSince, dateLabel, dayKey, dayBefore, spanLabel, advanceDate, todayLabel } from "../app/dates.ts";
 
 /* Every date here is built with the local constructor rather than parsed from a string, so
    these assertions hold in any time zone — including the ones where a UTC-parsed date lands
@@ -97,4 +97,18 @@ test("quarters, half-years and years cross the year boundary", () => {
 
 test("the time of day is carried along", () => {
   assert.equal(toDateTimeInput(advanceDate(at(2026, 8, 31, 16, 30), 3, "month")), "2026-11-30T16:30");
+});
+
+test("the header stamp spells the day and date out in full", () => {
+  assert.equal(todayLabel(at(2026, 9, 2)), "Wednesday, 2 September 2026");
+  assert.equal(todayLabel(at(2026, 1, 1, 23, 59)), "Thursday, 1 January 2026");
+});
+
+/* The header splits this label on ", " to bold the weekday. Chromium's en-GB writes no
+   comma of its own, so the label has to carry exactly one, put there by us. */
+test("the stamp carries its own comma, so the header can split on it", () => {
+  const parts = todayLabel(at(2026, 9, 2)).split(", ");
+  assert.equal(parts.length, 2);
+  assert.equal(parts[0], "Wednesday");
+  assert.equal(parts[1], "2 September 2026");
 });
