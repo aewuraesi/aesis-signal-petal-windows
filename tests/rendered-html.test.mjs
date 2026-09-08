@@ -64,7 +64,7 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   assert.match(source, /handled for today/);
   assert.match(source, /TWO-MINUTE WRAP-UP/);
   assert.match(source, /What can intentionally wait/);
-  assert.match(source, /never included in copied work summaries/);
+  assert.match(source, /never included in copied work\s+summaries/);
   assert.match(source, /ACT ON THE SIGNAL/);
   assert.match(source, /NEXT WEEK’S PRIORITIES/);
   assert.match(source, /WHAT YOU LEARNED/);
@@ -95,11 +95,11 @@ test("keeps private diary content contained and focus guidance actionable", asyn
   assert.match(source, /missing-action/);
 
 
-  assert.match(css, /\.detail-modal\{[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
-  assert.match(css, /\.detail-title h2,\.detail-title p\{overflow-wrap:anywhere;word-break:break-word/);
-  assert.match(css, /\.focus-now\{[^}]*grid-template-columns:minmax\(210px,.42fr\) minmax\(0,1.58fr\) auto/);
-  assert.match(css, /@media\(max-width:650px\)[\s\S]*\.focus-item\{grid-template-columns:26px minmax\(0,1fr\)\}/);
-  assert.match(css, /\.daily-check-in-modal\{[^}]*max-height:calc\(100dvh - 40px\)/);
+  assert.match(css, /\.detail-modal\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto/);
+  assert.match(css, /\.detail-title h2,\s*\.detail-title p\s*\{\s*overflow-wrap:\s*anywhere;\s*word-break:\s*break-word/);
+  assert.match(css, /\.focus-now\s*\{[^}]*grid-template-columns:\s*minmax\(210px,\s*0?\.42fr\) minmax\(0,\s*1\.58fr\) auto/);
+  assert.match(css, /@media\s*\(max-width:\s*650px\)[\s\S]*\.focus-item\s*\{\s*grid-template-columns:\s*26px minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.daily-check-in-modal\s*\{[^}]*max-height:\s*calc\(100dvh - 40px\)/);
 });
 
 test("ships an installable offline application shell", async () => {

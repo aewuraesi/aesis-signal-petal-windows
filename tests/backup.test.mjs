@@ -107,6 +107,19 @@ test("existing follow-up people are left alone", () => {
   assert.deepEqual(normaliseIssues([issue()])[0].followUpPeople, ["Chinonso"]);
 });
 
+test("task organisation and relationships survive backup normalisation", () => {
+  const [restored] = normaliseIssues([issue({
+    project: " Checkout refresh ", service: " payments-api ",
+    tags: [" incident ", "audit", "incident"], parentId: "parent-1",
+    dependencyIds: ["dep-1", "dep-1", "i1"], repeat: { every: 10, unit: "day" },
+  })]);
+  assert.equal(restored.project, "Checkout refresh");
+  assert.equal(restored.service, "payments-api");
+  assert.deepEqual(restored.tags, ["incident", "audit"]);
+  assert.deepEqual(restored.dependencyIds, ["dep-1"]);
+  assert.deepEqual(restored.repeat, { every: 10, unit: "day" });
+});
+
 test("generated related-work guesses are removed without touching real updates", () => {
   const generated = { id: "auto", at: "2026-08-21T10:01:00.000Z", author: "Signal Petal", text: "Related past work: Work on my tracker Portal. Review those resolutions before starting from zero." };
   const real = { id: "real", at: "2026-08-21T10:02:00.000Z", author: "Signal Petal", text: "A genuine recorded update." };
@@ -178,4 +191,64 @@ test("diary deletion history prevents an old page from being resurrected", () =>
   const staleBackup = payload();
   const { payload: merged } = mergeTransferData(deleted, staleBackup);
   assert.equal(merged.diaryEntries.length, 0);
+});
+
+/* ---------------------------------------------------------------------------
+   Deletions that travel. Merging by id alone handed a deleted task straight
+   back from the other device; these hold the fix in place.
+--------------------------------------------------------------------------- */
+const hoursAgo = hours => new Date(Date.now() - hours * 3600000).toISOString();
+
+test("a task deleted here does not come back from the other device", () => {
+  const gone = issue({ id: "i9", title: "Rotate the staging certificate", createdAt: hoursAgo(48), updates: [] });
+  const local = payload({ issues: [], deletions: { issues: { i9: hoursAgo(1) } } });
+  const incoming = payload({ issues: [gone] });
+  const merged = mergeTransferData(local, incoming).payload;
+  assert.deepEqual(merged.issues.map(item => item.id), []);
+  assert.equal(mergeTransferData(local, incoming).summary.deletedTasks, 1);
+});
+
+test("the deletion still holds when the other device is the one merging", () => {
+  const gone = issue({ id: "i9", createdAt: hoursAgo(48), updates: [] });
+  const merged = mergeTransferData(payload({ issues: [gone] }), payload({ issues: [], deletions: { issues: { i9: hoursAgo(1) } } })).payload;
+  assert.deepEqual(merged.issues.map(item => item.id), []);
+});
+
+test("a task edited after it was deleted survives the tombstone", () => {
+  /* Same rule the diary uses: work done after the delete is a decision to keep it. */
+  const revived = issue({ id: "i9", createdAt: hoursAgo(48), updatedAt: hoursAgo(1), updates: [] });
+  const merged = mergeTransferData(payload({ issues: [], deletions: { issues: { i9: hoursAgo(3) } } }), payload({ issues: [revived] })).payload;
+  assert.deepEqual(merged.issues.map(item => item.id), ["i9"]);
+});
+
+test("a tombstone is carried forward so the third device honours it too", () => {
+  const merged = mergeTransferData(payload({ issues: [], deletions: { issues: { i9: hoursAgo(1) } } }), payload({ issues: [] })).payload;
+  assert.ok(merged.deletions?.issues?.i9, "the merged payload has to keep the record");
+});
+
+test("tombstones older than six months are forgotten", () => {
+  const ancient = new Date(Date.now() - 200 * 86400000).toISOString();
+  const merged = mergeTransferData(payload({ issues: [], deletions: { issues: { i9: ancient } } }), payload({ issues: [] })).payload;
+  assert.equal(merged.deletions?.issues?.i9, undefined);
+});
+
+test("a deleted status does not come back, unless a surviving task still sits on it", () => {
+  const local = payload({ issues: [], statuses: ["New", "Ongoing", "Resolved"], deletions: { statuses: { "Waiting on dev": hoursAgo(1) } } });
+  const incoming = payload({ issues: [], statuses: ["New", "Ongoing", "Waiting on dev", "Resolved"] });
+  assert.ok(!mergeTransferData(local, incoming).payload.statuses.includes("Waiting on dev"));
+
+  const stillUsed = payload({ issues: [issue({ id: "i4", status: "Waiting on dev" })], statuses: ["New", "Ongoing", "Waiting on dev", "Resolved"] });
+  assert.ok(mergeTransferData(local, stillUsed).payload.statuses.includes("Waiting on dev"),
+    "dropping it would leave that task pointing at a status the app does not know");
+});
+
+test("a payload written before deletions existed still merges", () => {
+  const old = payload({ issues: [issue({ id: "i1" })] });
+  delete old.deletions;
+  assert.ok(isValidPayload(old));
+  assert.equal(mergeTransferData(old, old).payload.issues.length, 1);
+});
+
+test("a malformed deletions block is rejected rather than merged", () => {
+  assert.equal(isValidPayload(payload({ deletions: { issues: { i1: 17 } } })), false);
 });

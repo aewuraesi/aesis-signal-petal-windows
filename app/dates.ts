@@ -39,8 +39,9 @@ const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0
    rolls into the month after — 31 January plus one month becomes 3 March. Something due on the
    31st should land on the last day of the shorter month and then carry on at the 31st, so the
    day is clamped rather than allowed to overflow. */
-export const advanceDate = (from: Date, every: number, unit: "week" | "month" | "year") => {
+export const advanceDate = (from: Date, every: number, unit: "day" | "week" | "month" | "year") => {
   const at = new Date(from.getFullYear(), from.getMonth(), from.getDate(), from.getHours(), from.getMinutes());
+  if (unit === "day") { at.setDate(at.getDate() + every); return at; }
   if (unit === "week") { at.setDate(at.getDate() + every * 7); return at; }
   const months = (unit === "year" ? 12 : 1) * every;
   const day = at.getDate();

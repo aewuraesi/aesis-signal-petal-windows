@@ -5,7 +5,7 @@
    real data, so the fixtures are deliberately scruffy and the assertion is blunt: the page
    itself never scrolls horizontally, at any width, on any screen. */
 
-import { test, expect, openApp, go, openLogForm, type Screen } from "./seed";
+import { test, expect, openApp, go, openLogForm, type Screen, settled } from "./seed";
 
 const WIDTHS = [360, 390, 414, 768, 820, 1024, 1280, 1600];
 const SCREENS: Screen[] = ["Dashboard", "Calendar", "Insights", "Diary", "Weekly review", "Settings"];
@@ -64,6 +64,7 @@ test("the log form can be submitted on a short desktop window", async ({ page })
   await page.locator(".lane-picker .link-options button", { hasText: /^Professional$/ }).click();
   await page.locator(".modal .create").click({ timeout: 5000 });
 
+  await settled(page);
   const created = await page.evaluate(() => {
     const all = JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>;
     return all.some(item => item.title === "Logged from a short window");

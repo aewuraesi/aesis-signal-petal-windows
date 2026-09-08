@@ -1,0 +1,39 @@
+{
+  // Used ONLY for D1 administration - creating the database and applying migrations:
+  //
+  //   pnpm db:migrate:local     apply migrations to the local D1 used by `pnpm dev`
+  //   pnpm db:migrate           apply them to the real database in your account
+  //
+  // The DEPLOY config is not this file. `pnpm build` generates a complete one at
+  // dist/server/wrangler.json, which is what `pnpm deploy` uses - keeping it generated
+  // means it cannot drift from what the build actually produced. The one thing that
+  // config cannot know is which database is yours, which is what SIGNAL_PETAL_D1_NAME
+  // and SIGNAL_PETAL_D1_ID in your .env are for (see vite.config.ts).
+  //
+  // It lives here rather than in the project root ON PURPOSE: the Cloudflare Vite
+  // plugin picks up a root wrangler config and MERGES it into the generated one, which
+  // produced two DB bindings - the real one and this file's placeholder - in the same
+  // deploy config. Out of the root, it is only ever read when a command asks for it.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "aesis-signal-petal",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "signal-petal",
+      // drizzle-kit writes migrations here; wrangler looks in ./migrations unless told.
+      // It belongs INSIDE the binding - at the top level wrangler ignores it with only a
+      // warning, then reports "no migrations present" for a directory nobody chose.
+      "migrations_dir": "../drizzle",
+      // Replace with the id `wrangler d1 create signal-petal` prints, and put the same
+      // value in .env as SIGNAL_PETAL_D1_ID so the deployed worker binds to it too.
+      //
+      // Until you do, this is the placeholder id vite.config.ts falls back to. The two
+      // have to AGREE: the local D1 is a file keyed by database_id, so an id here that
+      // the dev server does not use means `pnpm db:migrate:local` creates the tables in
+      // a database nothing reads, and `pnpm dev` still reports "no such table".
+      "database_id": "00000000-0000-4000-8000-000000000000"
+    }
+  ]
+}

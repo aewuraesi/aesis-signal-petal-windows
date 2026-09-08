@@ -1,7 +1,7 @@
 /* The professional/personal choice: mandatory going forward, never clearable, and the one
    legacy state it allows has a way out. */
 
-import { test, expect, openApp, go, openLogForm, openTask, storedTask, task, ago, WEEK } from "./seed";
+import { test, expect, openApp, go, openLogForm, openTask, storedTask, task, ago, WEEK , settled } from "./seed";
 
 test("a task cannot be logged without choosing a lane", async ({ page }) => {
   await openApp(page);
@@ -34,6 +34,7 @@ test("the chosen lane reaches the created task, and the next one starts blank", 
   await page.locator(".lane-picker .link-options button", { hasText: /^Professional$/ }).click();
   await page.locator(".modal .create").click();
 
+  await settled(page);
   const created = await page.evaluate(() => {
     const all = JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>;
     return all.find(item => item.title === "Laned on the way in") ?? null;

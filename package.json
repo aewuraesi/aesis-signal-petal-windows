@@ -1,6 +1,7 @@
 {
   "name": "aesis-signal-petal",
   "version": "1.2.0",
+  "main": "desktop/main.cjs",
   "private": true,
   "packageManager": "pnpm@11.19.0",
   "engines": {
@@ -13,7 +14,13 @@
     "test": "npm run build && node --test \"tests/**/*.test.mjs\"",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "desktop:smoke": "node desktop/smoke.mjs",
+    "desktop:mac": "pnpm run build && pnpm run desktop:smoke && electron-builder --mac --dir",
+    "desktop:windows": "pnpm run build && pnpm run desktop:smoke && electron-builder --win --dir",
+    "deploy": "vinext build && wrangler deploy -c dist/server/wrangler.json",
+    "db:migrate": "wrangler d1 migrations apply signal-petal --remote -c cloudflare/d1.jsonc",
+    "db:migrate:local": "wrangler d1 migrations apply signal-petal --local --persist-to .wrangler/state -c cloudflare/d1.jsonc"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
@@ -32,11 +39,14 @@
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
     "drizzle-kit": "0.31.10",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "16.4.0",
+    "prettier": "^3.9.6",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
@@ -45,5 +55,30 @@
     "vite": "8.0.13",
     "wrangler": "4.92.0"
   },
-  "type": "module"
+  "type": "module",
+  "build": {
+    "appId": "com.signalpetal.desktop",
+    "productName": "Signal Petal",
+    "asar": true,
+    "files": [
+      "desktop/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "desktop-release"
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "identity": null
+    },
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "signAndEditExecutable": false
+    }
+  }
 }

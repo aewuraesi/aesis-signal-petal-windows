@@ -72,6 +72,10 @@ test("weeks advance by sevens", () => {
   assert.equal(toDateTimeInput(advanceDate(at(2026, 8, 31), 2, "week")).slice(0, 10), "2026-09-14");
 });
 
+test("custom daily cadences advance by whole local days", () => {
+  assert.equal(toDateTimeInput(advanceDate(at(2026, 8, 7, 16, 30), 10, "day")), "2026-08-17T16:30");
+});
+
 test("a monthly cadence lands on the same date, and clamps when that date does not exist", () => {
   assert.equal(toDateTimeInput(advanceDate(at(2026, 1, 15), 1, "month")).slice(0, 10), "2026-02-15");
   // 31 January plus a month is the last day of February, NOT the 3rd of March.

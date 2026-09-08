@@ -11,6 +11,19 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+/* Deploying to your own Cloudflare account.
+
+   The build writes a complete `dist/server/wrangler.json`, so the deploy config is
+   generated rather than hand-kept — which is right, except that it inherits the
+   placeholder database the template was scaffolded with. These two variables are how
+   a real D1 database is named without forking the config: set them in `.env` (or in
+   the shell) and `pnpm deploy` picks them up. Unset, everything behaves exactly as
+   before, so local development is untouched.
+
+   See "Publishing your own copy" in the README. */
+const d1Name = process.env.SIGNAL_PETAL_D1_NAME ?? "site-creator-d1";
+const d1Id = process.env.SIGNAL_PETAL_D1_ID ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID;
+
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
@@ -18,8 +31,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: d1Name,
+          database_id: d1Id,
         },
       ]
     : [],

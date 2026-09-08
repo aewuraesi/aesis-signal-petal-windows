@@ -88,3 +88,99 @@ test("every row has the same number of cells, whatever is in them", () => {
 test("the file is named for the day it was saved", () => {
   assert.match(csvFileName(), /^signal-petal-tasks-\d{4}-\d{2}-\d{2}\.csv$/);
 });
+
+/* ---------------------------------------------------------------------------
+   Reading a spreadsheet back in.
+--------------------------------------------------------------------------- */
+import { parseCsv, guessColumns, rowsToIssues, rowId } from "../app/csv.ts";
+
+const STATUSES = ["New", "Ongoing", "Blocked", "Resolved"];
+
+test("a comma inside a quoted cell does not split the row", () => {
+  assert.deepEqual(parseCsv('a,"b,c",d'), [["a", "b,c", "d"]]);
+});
+
+test("a newline inside a quoted cell stays inside the cell", () => {
+  /* This is the case that matters: pasted logs have newlines in them. */
+  assert.deepEqual(parseCsv('title,details\r\n"Cert expiry","line one\nline two"'),
+    [["title", "details"], ["Cert expiry", "line one\nline two"]]);
+});
+
+test("a doubled quote is one quote", () => {
+  assert.deepEqual(parseCsv('"she said ""no"""'), [['she said "no"']]);
+});
+
+test("a leading byte-order mark is not part of the first heading", () => {
+  assert.deepEqual(parseCsv("﻿title,owner"), [["title", "owner"]]);
+});
+
+test("blank rows are dropped", () => {
+  assert.deepEqual(parseCsv("a,b\r\n\r\n,\r\nc,d"), [["a", "b"], ["c", "d"]]);
+});
+
+test("columns are guessed from the headings a list actually arrives with", () => {
+  assert.deepEqual(guessColumns(["Summary", "Assignee", "State", "Due date"]),
+    { title: 0, owner: 1, status: 2, due: 3 });
+});
+
+test("one heading is not claimed by two fields", () => {
+  const mapping = guessColumns(["Task", "Task owner"]);
+  assert.notEqual(mapping.title, mapping.owner);
+});
+
+test("a row with no title is skipped and named", () => {
+  const { issues, skipped } = rowsToIssues([["", "Ewuresi"], ["Rotate the cert", "Ewuresi"]],
+    { title: 0, owner: 1 }, { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(issues.length, 1);
+  assert.deepEqual(skipped, [{ row: 2, reason: "no title" }]);
+});
+
+test("an unreadable due date is left empty rather than guessed", () => {
+  /* A half-understood date would start counting the task as late. */
+  const { issues } = rowsToIssues([["Rotate the cert", "sometime soon"]], { title: 0, due: 1 },
+    { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(issues[0].expected, "");
+});
+
+test("a status the workspace does not have becomes New", () => {
+  const { issues } = rowsToIssues([["A", "In Review"], ["B", "blocked"]], { title: 0, status: 1 },
+    { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(issues[0].status, "New");
+  assert.equal(issues[1].status, "Blocked", "matching ignores case");
+});
+
+test("a row that arrives finished gets the stamp that puts it in the right week", () => {
+  const { issues } = rowsToIssues([["A", "Resolved"]], { title: 0, status: 1 },
+    { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.ok(issues[0].completedAt, "without this it would never appear in a summary");
+});
+
+test("the owner falls back to you when the sheet has none", () => {
+  const { issues } = rowsToIssues([["A", ""]], { title: 0, owner: 1 },
+    { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(issues[0].owner, "Ewuresi");
+});
+
+test("importing the same file twice does not duplicate the work", () => {
+  const rows = [["Rotate the cert", "Ewuresi"]];
+  const first = rowsToIssues(rows, { title: 0, owner: 1 }, { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  const second = rowsToIssues(rows, { title: 0, owner: 1 }, { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(first.issues[0].id, second.issues[0].id, "a stable id lets the merge update instead of adding");
+});
+
+test("a repeated row inside one file is imported once", () => {
+  const { issues, skipped } = rowsToIssues([["A", "Ewuresi"], ["A", "Ewuresi"]], { title: 0, owner: 1 },
+    { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.equal(issues.length, 1);
+  assert.equal(skipped.length, 1);
+});
+
+test("an imported task carries no machine-written history", () => {
+  const { issues } = rowsToIssues([["A"]], { title: 0 }, { statuses: STATUSES, defaultOwner: "Ewuresi" });
+  assert.deepEqual(issues[0].updates, []);
+});
+
+test("a row id is stable for the same content and different for different content", () => {
+  assert.equal(rowId(["a", "b"]), rowId(["a", "b"]));
+  assert.notEqual(rowId(["a", "b"]), rowId(["a", "c"]));
+});

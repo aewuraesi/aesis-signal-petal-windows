@@ -4,14 +4,20 @@
    opens knowing what the last one learned. Both are easy to get subtly wrong and impossible
    to notice until months later, which is exactly what a test is for. */
 
-import { test, expect, openApp, go, openTask, task, ago } from "./seed";
+import { test, expect, openApp, go, openTask, task, ago, settled } from "./seed";
 
 const DAY = 86400000;
 
-const storedTasks = (page: import("@playwright/test").Page) => page.evaluate(() =>
-  JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>);
+const storedTasks = async (page: import("@playwright/test").Page) => {
+  await settled(page);
+  return page.evaluate(() => JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>);
+};
 
-/* A quarterly review that was due four days ago, so closing it now is closing it late. */
+/* A quarterly review that was due four days ago, so closing it now is closing it late.
+
+   Since rounds also open on the calendar, seeding this one means its next round is already
+   open by the time the page has hydrated — which is the point of that feature and is why
+   the completion-path tests below use QUARTERLY_AHEAD instead. */
 const QUARTERLY = task("cert", {
   title: "Certificate rotation",
   lane: "professional",
@@ -20,6 +26,10 @@ const QUARTERLY = task("cert", {
   action: "Rotate and verify",
   memory: { symptoms: "", rootCause: "", resolution: "Rotated it", learning: "Start a week earlier next time.", followUp: "" },
 });
+
+/* The same work, still ahead of its date, so nothing opens on its own and closing it is
+   the only thing that can open the next round. */
+const QUARTERLY_AHEAD = { ...QUARTERLY, id: "cert", expected: new Date(Date.now() + 20 * DAY).toISOString().slice(0, 16) };
 
 test("a task can be set to come round again, and says what that means", async ({ page }) => {
   await openApp(page, [QUARTERLY], []);
@@ -35,7 +45,7 @@ test("a task can be set to come round again, and says what that means", async ({
 });
 
 test("closing it out opens the next round, once", async ({ page }) => {
-  await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
+  await openApp(page, [{ ...QUARTERLY_AHEAD, repeat: { every: 3, unit: "month" } }], []);
   await openTask(page, "Certificate rotation");
   await page.locator(".detail-modal select").first().selectOption("Resolved");
   await page.waitForTimeout(400);
@@ -52,11 +62,11 @@ test("closing it out opens the next round, once", async ({ page }) => {
   expect(next.completedAt).toBeUndefined();
 });
 
-test("the cadence holds even though it was finished late", async ({ page }) => {
+test("the cadence holds even though the round was missed", async ({ page }) => {
+  /* Four days past its date, so the next round opens on its own. The rule under test is
+     the same either way: the cadence counts from when it was DUE, not from today, or every
+     missed round would push a quarterly review out into a five-monthly one. */
   await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
-  await openTask(page, "Certificate rotation");
-  await page.locator(".detail-modal select").first().selectOption("Resolved");
-  await page.waitForTimeout(400);
 
   const next = (await storedTasks(page)).find(item => item.repeatedFrom === "cert")!;
   const due = new Date(next.expected as string).getTime();
@@ -69,7 +79,7 @@ test("the cadence holds even though it was finished late", async ({ page }) => {
 });
 
 test("reopening and closing again does not stack up rounds", async ({ page }) => {
-  await openApp(page, [{ ...QUARTERLY, repeat: { every: 1, unit: "month" } }], []);
+  await openApp(page, [{ ...QUARTERLY_AHEAD, repeat: { every: 1, unit: "month" } }], []);
   await openTask(page, "Certificate rotation");
   const status = page.locator(".detail-modal select").first();
   await status.selectOption("Resolved");
@@ -83,7 +93,7 @@ test("reopening and closing again does not stack up rounds", async ({ page }) =>
 });
 
 test("the next round opens with what was worked out last time", async ({ page }) => {
-  await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
+  await openApp(page, [{ ...QUARTERLY_AHEAD, repeat: { every: 3, unit: "month" } }], []);
   await openTask(page, "Certificate rotation");
   await page.locator(".detail-modal select").first().selectOption("Resolved");
   await page.waitForTimeout(400);
@@ -107,7 +117,7 @@ test("a one-off stays a one-off", async ({ page }) => {
 });
 
 test("a repeating task does not distort the weekly summary", async ({ page }) => {
-  await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
+  await openApp(page, [{ ...QUARTERLY_AHEAD, repeat: { every: 3, unit: "month" } }], []);
   await openTask(page, "Certificate rotation");
   await page.locator(".detail-modal select").first().selectOption("Resolved");
   await page.waitForTimeout(400);
@@ -124,4 +134,50 @@ test("a repeating task does not distort the weekly summary", async ({ page }) =>
   expect(text).toMatch(/Delivered \(1\)/);
   const mentions = text.split("\n").filter(line => line.includes("Certificate rotation"));
   expect(mentions, `named more than once:\n${text}`).toHaveLength(1);
+});
+
+/* ---------------------------------------------------------------------------
+   Rounds that open because the date passed, not because anything was closed.
+
+   The cadence used to depend entirely on closing the current round, so the one
+   case where the rhythm matters most - the round nobody got to - was the exact
+   case where it silently stopped.
+--------------------------------------------------------------------------- */
+
+test("a missed round opens the next one on its own, and says the old one is still open", async ({ page }) => {
+  await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
+
+  const rounds = (await storedTasks(page)).filter(item => item.title === "Certificate rotation");
+  expect(rounds, "the next round should open without anything being closed").toHaveLength(2);
+
+  const next = rounds.find(item => item.id !== "cert")!;
+  expect(next).toMatchObject({ status: "New", repeatedFrom: "cert" });
+  expect(new Date(next.expected as string).getTime()).toBeGreaterThan(Date.now());
+
+  /* The round nobody got to is left open. It was not done, and the app does not get to
+     decide otherwise - it is marked instead. */
+  const stale = rounds.find(item => item.id === "cert")!;
+  expect(stale.status).toBe("Ongoing");
+  expect(stale.completedAt).toBeUndefined();
+  /* The mark belongs to the round that was left behind, not to the one that just opened,
+     so find the card by the mark rather than taking whichever card comes first. */
+  const marked = page.locator(".issue-card", { has: page.locator(".overtaken-chip") });
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toContainText("Certificate rotation");
+});
+
+test("it does not keep opening rounds every time the app is reloaded", async ({ page }) => {
+  await openApp(page, [{ ...QUARTERLY, repeat: { every: 3, unit: "month" } }], []);
+  expect((await storedTasks(page)).filter(item => item.repeatedFrom === "cert")).toHaveLength(1);
+
+  await page.reload();
+  await expect(page.locator(".workspace header .eyebrow").first()).toContainText("EWURESI");
+  await page.waitForTimeout(700);
+  expect((await storedTasks(page)).filter(item => item.repeatedFrom === "cert"), "a reload must not open another").toHaveLength(1);
+});
+
+test("work that is late but does not repeat is left completely alone", async ({ page }) => {
+  await openApp(page, [task("late", { title: "A late one-off", lane: "professional", status: "Ongoing", expected: ago(4 * DAY) })], []);
+  expect(await storedTasks(page)).toHaveLength(1);
+  await expect(page.locator(".overtaken-chip")).toHaveCount(0);
 });

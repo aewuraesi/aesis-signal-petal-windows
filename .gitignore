@@ -45,3 +45,4 @@ yarn-error.log*
 /output/
 /test-results/
 /playwright-report/
+/desktop-release/

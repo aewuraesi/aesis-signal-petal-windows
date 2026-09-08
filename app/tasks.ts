@@ -40,7 +40,7 @@ export const nextDue = (issue: Issue, finishedAt: Date) => {
    It keeps what describes the work — title, details, owner, lane, follow-up people, and the
    cadence itself — and drops everything that belonged to the round just finished: its outcome,
    its notes, its completion stamp. Those stay on the task that earned them. */
-export const nextOccurrence = (issue: Issue, finishedAt: Date, id: string): Issue | null => {
+export const nextOccurrence = (issue: Issue, finishedAt: Date, id: string, note = "Came round again."): Issue | null => {
   const due = nextDue(issue, finishedAt);
   if (!due) return null;
   const at = finishedAt.toISOString();
@@ -56,7 +56,7 @@ export const nextOccurrence = (issue: Issue, finishedAt: Date, id: string): Issu
     createdAt: at,
     updatedAt: at,
     repeatedFrom: issue.id,
-    updates: [{ id: `${id}-1`, at, author: issue.owner, text: "Came round again." }],
+    updates: [{ id: `${id}-1`, at, author: issue.owner, text: note }],
   };
 };
 
@@ -95,3 +95,74 @@ export const workInPeriod = (issues: Issue[], entries: DiaryEntry[], checkIns: D
 };
 
 export type PeriodWork = ReturnType<typeof workInPeriod>;
+
+
+/* ---------------------------------------------------------------------------
+   Compacting long-finished work.
+
+   Nothing is archived — that rule has not changed. A compacted task stays exactly
+   where it was, in the list, in the counts, in search and in every summary. What
+   goes is its update timeline, which is the bulk of a long-running task and the
+   part nobody reads three months after it closed.
+
+   It is destructive, so it only ever runs when the writer asks for it, and the
+   confirm says plainly what is about to be lost.
+--------------------------------------------------------------------------- */
+export const COMPACT_AFTER_DAYS = 90;
+
+/* Two updates is the floor: compacting one saves nothing worth the loss. */
+export const isCompactable = (issue: Issue, now = Date.now()) =>
+  isCompleteStatus(issue.status)
+  && !issue.compactedAt
+  && issue.updates.length > 1
+  && now - new Date(completedAtOf(issue)).getTime() > COMPACT_AFTER_DAYS * 86400000;
+
+export const compactableIssues = (issues: Issue[], now = Date.now()) => issues.filter(issue => isCompactable(issue, now));
+
+/** Roughly what compacting these would give back, in bytes of stored characters. */
+export const compactionSaving = (issues: Issue[]) =>
+  issues.reduce((total, issue) => total + JSON.stringify(issue.updates).length * 2, 0);
+
+export const compactIssue = (issue: Issue, at: string): Issue => ({
+  ...issue,
+  /* Both of these fall back to the timeline when they are missing, so they have to be
+     written down BEFORE it goes — or compacting would quietly move a task out of the
+     week it was finished in, and every summary would disagree with itself. */
+  createdAt: issue.createdAt || issue.updates[0]?.at || at,
+  completedAt: completedAtOf(issue),
+  updates: [],
+  compactedAt: at,
+  compactedUpdates: (issue.compactedUpdates ?? 0) + issue.updates.length,
+});
+
+export const compactOlderWork = (issues: Issue[], at: string, now = Date.now()) =>
+  issues.map(issue => (isCompactable(issue, now) ? compactIssue(issue, at) : issue));
+
+
+/* ---------------------------------------------------------------------------
+   Rounds that open on the calendar, not on being closed out.
+
+   The cadence used to depend entirely on finishing the current round: close it and
+   the next one opens. Which means the one case where the rhythm matters most - the
+   round nobody got to - is the exact case where it silently stopped. A quarterly
+   review missed once simply never came round again.
+
+   So a round whose date has passed opens the next one anyway, and the old one is
+   left open rather than tidied away: it was not done, and the app does not get to
+   decide otherwise. Being overtaken is what marks it.
+--------------------------------------------------------------------------- */
+
+/** Repeating work whose date has passed and which has not already opened its next round. */
+export const scheduledRounds = (issues: Issue[], now = Date.now()) => issues.filter(issue =>
+  !!issue.repeat
+  && !isCompleteStatus(issue.status)
+  && !issue.archivedAt
+  && !!issue.expected
+  && new Date(issue.expected).getTime() <= now
+  /* The same guard the completion path uses: something already pointing back at this
+     task means its next round exists, however it came to be opened. */
+  && !issues.some(other => other.repeatedFrom === issue.id));
+
+/** An unfinished round that a later one has already replaced. */
+export const isOvertaken = (issue: Issue, issues: Issue[]) =>
+  !isCompleteStatus(issue.status) && issues.some(other => other.repeatedFrom === issue.id);

@@ -112,7 +112,12 @@ export const openApp = async (page: Page, tasks: unknown[] = WEEK, pages: unknow
      passes instantly and every click after it lands in the gap. */
   await expect(page.locator(".workspace header .eyebrow").first()).toContainText("EWURESI");
   if (tasks.length) {
-    await expect(page.locator(".metric-card", { hasText: "All tasks" }).locator("strong")).toHaveText(String(tasks.length));
+    /* At least, not exactly: repeating work whose date has passed opens its next round on
+       load, so a seed of overdue repeats legitimately shows more cards than it seeded. The
+       job of this line is to prove hydration has run, and "the seeded work is on screen"
+       proves that just as well. */
+    await expect.poll(async () => Number(await page.locator(".metric-card", { hasText: "All tasks" }).locator("strong").innerText()))
+      .toBeGreaterThanOrEqual(tasks.length);
   }
 };
 
@@ -150,10 +155,20 @@ export const lastCopied = (page: Page) => page.evaluate(() => {
   return copied[copied.length - 1] ?? "";
 });
 
-export const storedTask = (page: Page, id: string) => page.evaluate((id) => {
-  const all = JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>;
-  return all.find(task => task.id === id) ?? null;
-}, id);
+/* Edits INSIDE a task are saved on a short delay so that typing does not rewrite the
+   whole list on every character; changes to which tasks exist are still written at once.
+   So anything reading storage straight after an edit has to let that delay pass, or it
+   reads the value from before the edit. */
+export const SAVE_DELAY = 500;
+export const settled = (page: Page) => page.waitForTimeout(SAVE_DELAY + 150);
+
+export const storedTask = async (page: Page, id: string) => {
+  await settled(page);
+  return page.evaluate((id) => {
+    const all = JSON.parse(localStorage.getItem("signal-petal-issues") ?? "[]") as Array<Record<string, unknown>>;
+    return all.find(task => task.id === id) ?? null;
+  }, id);
+};
 
 export const test = base;
 export { expect };
