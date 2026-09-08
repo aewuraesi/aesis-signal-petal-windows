@@ -778,6 +778,15 @@ export default function Home() {
   const [focusRescheduleId, setFocusRescheduleId] = useState("");
   const [focusCompletingId, setFocusCompletingId] = useState("");
   const [section, setSection] = useState<Section>("dashboard");
+  const [settingsCategory, setSettingsCategory] = useState<
+    | "general"
+    | "dashboard"
+    | "workflow"
+    | "diary"
+    | "notifications"
+    | "privacy"
+    | "data"
+  >("general");
   const [insightRange, setInsightRange] = useState<InsightRange>("30");
   const [insightSection, setInsightSection] = useState<InsightSection>("work");
   const [insightDrilldown, setInsightDrilldown] =
@@ -6835,9 +6844,35 @@ export default function Home() {
         {section === "settings" && (
           <section
             className="settings-page"
-            aria-labelledby="settings-page-title"
+            aria-label="Settings"
+            data-settings-category={settingsCategory}
           >
+            <div className="settings-shell">
+              <nav className="settings-nav" aria-label="Settings categories">
+                {([
+                  ["general", "General", "Profile and appearance"],
+                  ["dashboard", "Dashboard", "Your home view"],
+                  ["workflow", "Workflow", "Statuses and structure"],
+                  ["diary", "Diary", "Paper and handwriting"],
+                  ["notifications", "Notifications", "Reminders and alerts"],
+                  ["privacy", "Privacy & security", "Locks and encryption"],
+                  ["data", "Data", "Sync, backup and export"],
+                ] as const).map(([value, label, detail]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={settingsCategory === value ? "is-active" : ""}
+                    aria-current={settingsCategory === value ? "page" : undefined}
+                    onClick={() => setSettingsCategory(value)}
+                  >
+                    <span>{label}</span>
+                    <small>{detail}</small>
+                  </button>
+                ))}
+              </nav>
+              <div className="settings-content">
             <div className="settings-grid">
+              <div className="settings-category" data-category="general">
               <article className="settings-card">
                 <p className="eyebrow">PROFILE</p>
                 <h2>Your workspace</h2>
@@ -6875,9 +6910,11 @@ export default function Home() {
                   </div>
                 </form>
               </article>
+              </div>
+              <div className="settings-category" data-category="general">
               <article className="settings-card">
                 <p className="eyebrow">APPEARANCE</p>
-                <h2 id="settings-page-title">Theme &amp; display</h2>
+                <h2>Theme &amp; display</h2>
                 <label className="settings-field">
                   Theme
                   <select
@@ -6908,16 +6945,22 @@ export default function Home() {
                   />
                 </button>
               </article>
+              </div>
+              <div className="settings-category" data-category="dashboard">
               <DashboardPreferences
                 value={dashboardPrefs}
                 onChange={setDashboardPrefs}
               />
+              </div>
+              <div className="settings-category" data-category="privacy">
               <WorkspaceEncryption
                 recoveryKey={workspaceRecoveryKey}
                 onEnable={enableWorkspaceEncryption}
                 onDisable={disableWorkspaceEncryption}
                 onImport={importWorkspaceRecoveryKey}
               />
+              </div>
+              <div className="settings-category" data-category="diary">
               <article className="settings-card">
                 <p className="eyebrow">DIARY</p>
                 <h2>Paper &amp; handwriting</h2>
@@ -6983,6 +7026,8 @@ export default function Home() {
                   the one thing I keep pushing back.
                 </div>
               </article>
+              </div>
+              <div className="settings-category" data-category="privacy">
               <article className="settings-card">
                 <p className="eyebrow">PRIVACY</p>
                 <h2>Diary lock</h2>
@@ -7032,6 +7077,8 @@ export default function Home() {
                   </p>
                 )}
               </article>
+              </div>
+              <div className="settings-category" data-category="notifications">
               <article className="settings-card">
                 <p className="eyebrow">NOTIFICATIONS</p>
                 <h2>Reminders</h2>
@@ -7095,11 +7142,15 @@ export default function Home() {
                   </p>
                 )}
               </article>
+              </div>
             </div>
+            <div className="settings-category" data-category="privacy">
             <DataLocationPanel
               signedIn={syncState !== "signed-out"}
               diaryLocked={lockOn}
             />
+            </div>
+            <div className="settings-category" data-category="workflow">
             <article className="settings-card settings-wide">
               <p className="eyebrow">WORKFLOW</p>
               <h2>Customize statuses</h2>
@@ -7207,6 +7258,8 @@ export default function Home() {
                 </button>
               </div>
             </article>
+            </div>
+            <div className="settings-category" data-category="data">
             <article className="settings-card settings-wide">
               <p className="eyebrow">CLOUD &amp; DATA</p>
               <h2>Sync, export, or reset your data</h2>
@@ -7478,6 +7531,9 @@ export default function Home() {
                 </p>
               )}
             </article>
+            </div>
+              </div>
+            </div>
           </section>
         )}
       </section>
